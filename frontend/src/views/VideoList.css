@@ -1,0 +1,19 @@
+.video-list {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-header h2 {
+  margin: 0;
+}
+
+.pagination {
+  margin-top: 20px;
+  text-align: center;
+} 
