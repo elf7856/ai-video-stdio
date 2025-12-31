@@ -9,15 +9,14 @@ from app.core.config import settings
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 
-# 初始化图像服务
-image_manager = ImageServiceManager()
+from app import dependencies
 
 @router.get("/providers")
 async def get_available_providers():
     """获取可用的图像生成器列表"""
     try:
-        providers = image_manager.get_available_providers()
-        provider_info = image_manager.get_provider_info()
+        providers = dependencies.video_manager.image_manager.get_available_providers()
+        provider_info = dependencies.video_manager.image_manager.get_provider_info()
         
         return {
             "available_providers": providers,
@@ -48,7 +47,7 @@ async def generate_image(
                 raise HTTPException(status_code=400, detail="尺寸格式错误，请使用 '宽x高' 格式")
         
         # 生成图像
-        image_path = await image_manager.generate_image(
+        image_path = await dependencies.video_manager.image_manager.generate_image(
             prompt=prompt,
             style=style,
             provider=provider,
@@ -89,7 +88,7 @@ async def generate_image_with_description(
                 raise HTTPException(status_code=400, detail="尺寸格式错误，请使用 '宽x高' 格式")
         
         # 生成图像
-        image_path = await image_manager.generator.generate_image_with_description(
+        image_path = await dependencies.video_manager.image_manager.generator.generate_image_with_description(
             content_requirement=content_requirement,
             style=style,
             size=image_size,
@@ -133,7 +132,7 @@ async def generate_image_batch(
                 raise HTTPException(status_code=400, detail="尺寸格式错误，请使用 '宽x高' 格式")
         
         # 批量生成图像
-        results = await image_manager.generator.generate_image_batch(
+        results = await dependencies.video_manager.image_manager.generator.generate_image_batch(
             prompts=prompts,
             style=style,
             size=image_size,
@@ -182,7 +181,7 @@ async def edit_image(
         if not os.path.exists(image_path):
             raise HTTPException(status_code=404, detail="图像文件不存在")
         
-        result_path = image_manager.edit_image(image_path, operation, **kwargs)
+        result_path = dependencies.video_manager.image_manager.edit_image(image_path, operation, **kwargs)
         
         if not result_path or not os.path.exists(result_path):
             raise HTTPException(status_code=500, detail="图像编辑失败")

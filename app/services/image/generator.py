@@ -13,80 +13,43 @@ import litellm
 import json
 import time
 from abc import ABC, abstractmethod
-from app.services.llm.analyzer import LLMService
+from app.services.llm.service import llm_service
+from app.services.image.google_imagen_generator import GoogleImagenGenerator
 
 class ImageGeneratorBase(ABC):
     """图像生成器基类"""
-    
+
     @abstractmethod
     async def generate_image(self, prompt: str, negative_prompt: str = None,
                            size: Tuple[int, int] = None, **kwargs) -> str:
         """生成图像"""
         pass
-    
+
     @abstractmethod
     def is_available(self) -> bool:
         """检查服务是否可用"""
         pass
 
-class DalleGenerator(ImageGeneratorBase):
-    """DALL-E图像生成器"""
-    
+
+class GoogleImagenAdapter(ImageGeneratorBase):
+    """Google Imagen 3适配器"""
+
     def __init__(self):
-        self.api_key = settings.openai_api_key
-        self.model = settings.dalle_model
-        self.quality = settings.dalle_quality
-        self.style = settings.dalle_style
-    
+        self.generator = GoogleImagenGenerator(model="gemini-3-pro-image-preview")
+
     def is_available(self) -> bool:
-        return bool(self.api_key)
-    
+        return self.generator.is_available()
+
     async def generate_image(self, prompt: str, negative_prompt: str = None,
                            size: Tuple[int, int] = None, **kwargs) -> str:
-        """使用DALL-E生成图像"""
-        if not self.is_available():
-            raise Exception("DALL-E API密钥未配置")
-        
-        try:
-            import openai
-            
-            client = openai.AsyncOpenAI(api_key=self.api_key)
-            
-            # DALL-E 3只支持特定尺寸
-            if size:
-                if size[0] == size[1]:  # 正方形
-                    size_str = "1024x1024"
-                elif size[0] > size[1]:  # 横向
-                    size_str = "1792x1024"
-                else:  # 纵向
-                    size_str = "1024x1792"
-            else:
-                size_str = "1024x1024"
-            
-            response = await client.images.generate(
-                model=self.model,
-                prompt=prompt,
-                size=size_str,
-                quality=self.quality,
-                style=self.style,
-                n=1
-            )
-            
-            # 下载图像
-            image_url = response.data[0].url
-            output_path = tempfile.mktemp(suffix='.png')
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as resp:
-                    if resp.status == 200:
-                        with open(output_path, 'wb') as f:
-                            f.write(await resp.read())
-                        return output_path
-                    else:
-                        raise Exception(f"图像下载失败: {resp.status}")
-                        
-        except Exception as e:
-            raise Exception(f"DALL-E生成失败: {str(e)}")
+        """使用Google Imagen生成图像"""
+        return await self.generator.generate_image(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            size=size,
+            **kwargs
+        )
+
 
 class StabilityGenerator(ImageGeneratorBase):
     """Stability AI图像生成器"""
@@ -361,7 +324,7 @@ class LocalGenerator(ImageGeneratorBase):
                 self.pipeline.enable_attention_slicing()
             
         except Exception as e:
-            print(f"模型加载失败: {str(e)}")
+            logger.error(f"模型加载失败: {str(e)}", exc_info=True)
             self.pipeline = None
     
     def is_available(self) -> bool:
@@ -401,9 +364,9 @@ class ImageGenerator:
     
     def __init__(self, provider: str = None):
         self.provider = provider or settings.default_image_provider
-        self.llm_service = LLMService()
+        self.llm_service = llm_service
         self.generators = {
-            'dalle': DalleGenerator(),
+            'google_imagen': GoogleImagenAdapter(),
             'stability': StabilityGenerator(),
             'replicate': ReplicateGenerator(),
             'leonardo': LeonardoGenerator(),
@@ -439,11 +402,16 @@ class ImageGenerator:
                 {"role": "user", "content": prompt}
             ]
             
-            content = await self.llm_service.complete(messages, task_type="generation")
-            return content.strip()
+            # 调用LLM服务
+            result = self.llm_service.call(messages, max_tokens=2000, temperature=0.7)
+            if result.get("success"):
+                return result["content"].strip()
+            else:
+                logger.warning(f"LLM调用失败: {result.get('error')}")
+                return content_requirement
             
         except Exception as e:
-            print(f"图像描述生成失败: {str(e)}")
+            logger.error(f"图像描述生成失败: {str(e)}", exc_info=True)
             return content_requirement
     
     async def generate_image(self, prompt: str, negative_prompt: str = None,
@@ -561,7 +529,7 @@ class ImageEditor:
                 return output_path
                 
         except Exception as e:
-            print(f"图像调整失败: {str(e)}")
+            logger.error(f"图像调整失败: {str(e)}", exc_info=True)
             return None
     
     @staticmethod
@@ -594,7 +562,7 @@ class ImageEditor:
                 return output_path
                 
         except Exception as e:
-            print(f"滤镜应用失败: {str(e)}")
+            logger.error(f"滤镜应用失败: {str(e)}", exc_info=True)
             return None
     
     @staticmethod
@@ -643,7 +611,7 @@ class ImageEditor:
                 return output_path
                 
         except Exception as e:
-            print(f"文字覆盖失败: {str(e)}")
+            logger.error(f"文字覆盖失败: {str(e)}", exc_info=True)
             return None
 
 class ImageServiceManager:
@@ -678,4 +646,4 @@ class ImageServiceManager:
     
     def get_provider_info(self) -> Dict[str, Dict]:
         """获取生成器信息"""
-        return self.generator.get_provider_info() 
+        return self.generator.get_provider_info()

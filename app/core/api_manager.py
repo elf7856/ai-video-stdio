@@ -4,11 +4,11 @@ API状态管理器
 统一管理所有API接入状态、配置和使用
 """
 
-import os
 import asyncio
 from typing import Dict, List, Optional, Any
 from enum import Enum
 import logging
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -48,39 +48,19 @@ class APIManager:
     
     def _initialize_apis(self):
         """初始化所有API信息"""
-        
+
         # LLM APIs
-        self.apis["openai_llm"] = APIInfo(
-            name="OpenAI LLM",
-            service_type="llm",
-            provider="openai",
-            config_required=["OPENAI_API_KEY"],
-            dependencies=["openai"],
-            description="OpenAI GPT模型，用于内容分析和生成",
-            priority=1
-        )
-        
         self.apis["google_llm"] = APIInfo(
             name="Google Gemini",
-            service_type="llm", 
+            service_type="llm",
             provider="google",
             config_required=["GOOGLE_API_KEY"],
             dependencies=["google.generativeai"],
             description="Google Gemini模型，免费额度较大",
             priority=1
         )
-        
-        self.apis["anthropic_llm"] = APIInfo(
-            name="Anthropic Claude",
-            service_type="llm",
-            provider="anthropic", 
-            config_required=["ANTHROPIC_API_KEY"],
-            dependencies=["anthropic"],
-            description="Anthropic Claude模型，擅长长文本处理",
-            priority=2
-        )
-        
-        # TTS APIs  
+
+        # TTS APIs
         self.apis["edge_tts"] = APIInfo(
             name="Edge TTS",
             service_type="tts",
@@ -90,17 +70,7 @@ class APIManager:
             description="微软Edge TTS，免费，支持多种中文语音",
             priority=1
         )
-        
-        self.apis["openai_tts"] = APIInfo(
-            name="OpenAI TTS", 
-            service_type="tts",
-            provider="openai",
-            config_required=["OPENAI_API_KEY"],
-            dependencies=["openai"],
-            description="OpenAI语音合成，质量高但收费",
-            priority=3
-        )
-        
+
         self.apis["elevenlabs_tts"] = APIInfo(
             name="ElevenLabs TTS",
             service_type="tts",
@@ -112,16 +82,16 @@ class APIManager:
         )
         
         # 图像生成 APIs
-        self.apis["dalle"] = APIInfo(
-            name="DALL-E",
+        self.apis["google_imagen"] = APIInfo(
+            name="Google Imagen",
             service_type="image",
-            provider="openai",
-            config_required=["OPENAI_API_KEY"],
-            dependencies=["openai"],
-            description="OpenAI DALL-E图像生成",
-            priority=2
+            provider="google",
+            config_required=["GOOGLE_API_KEY"],
+            dependencies=["google.generativeai"],
+            description="Google Imagen 3图像生成",
+            priority=1
         )
-        
+
         self.apis["stability"] = APIInfo(
             name="Stability AI",
             service_type="image", 
@@ -184,6 +154,20 @@ class APIManager:
             priority=3
         )
     
+    def _get_config_value(self, config_key: str) -> Optional[str]:
+        """从settings获取配置值"""
+        config_mapping = {
+            'OPENAI_API_KEY': settings.openai_api_key,
+            'GOOGLE_API_KEY': settings.google_api_key,
+            'ANTHROPIC_API_KEY': settings.anthropic_api_key,
+            'ELEVENLABS_API_KEY': settings.elevenlabs_api_key,
+            'STABILITY_API_KEY': settings.stability_api_key,
+            'REPLICATE_API_TOKEN': settings.replicate_api_key,
+            'DALLE_API_KEY': settings.openai_api_key,  # DALL-E使用OpenAI密钥
+        }
+        value = config_mapping.get(config_key)
+        return value if value and value.strip() else None
+    
     async def check_api_status(self, api_key: str) -> APIStatus:
         """检查单个API状态"""
         api = self.apis.get(api_key)
@@ -203,8 +187,15 @@ class APIManager:
             # 检查配置
             missing_config = []
             for config in api.config_required:
-                if not os.getenv(config):
-                    missing_config.append(config)
+                # 对于系统级配置（如Google凭证），继续使用os.getenv
+                if config == "GOOGLE_APPLICATION_CREDENTIALS":
+                    import os
+                    if not os.getenv(config):
+                        missing_config.append(config)
+                else:
+                    # 对于API密钥，使用settings
+                    if not self._get_config_value(config):
+                        missing_config.append(config)
             
             if missing_config:
                 api.status = APIStatus.MISSING_CONFIG
@@ -232,8 +223,7 @@ class APIManager:
     async def _test_llm_api(self, api: APIInfo) -> APIStatus:
         """测试LLM API"""
         try:
-            from app.services.llm.service import LLMService
-            llm = LLMService()
+            from app.services.llm.service import llm_service as llm
             
             # 简单测试调用 - 使用正确的方法名
             response = await asyncio.get_event_loop().run_in_executor(

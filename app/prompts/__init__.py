@@ -13,6 +13,10 @@ from . import image_generation
 from . import system
 from . import llm_analysis
 
+# Import new prompt modules (commented out until files exist)
+# from . import ai_director
+# from . import video_editing
+
 # Export main functions and classes
 __all__ = [
     # Core classes

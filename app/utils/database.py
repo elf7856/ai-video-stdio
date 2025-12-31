@@ -2,6 +2,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
 from app.core.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 创建数据库引擎
 engine = create_engine(
@@ -31,4 +34,4 @@ def create_tables():
 def init_db():
     """初始化数据库"""
     create_tables()
-    print("数据库初始化完成") 
+    logger.info("数据库初始化完成") 

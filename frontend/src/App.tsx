@@ -1,23 +1,73 @@
-import { defineComponent } from 'vue'
-import { ElContainer, ElHeader, ElMain } from 'element-plus'
-import NavBar from './components/NavBar'
-import { RouterView } from 'vue-router'
-import './App.css'
+import React, { useState } from 'react';
+import { Routes, Route, useLocation } from 'react-router-dom';
+import { Box } from '@mui/material';
+import { motion } from 'framer-motion';
 
-export default defineComponent({
-  name: 'App',
-  setup() {
-    return () => (
-      <div id="app">
-        <ElContainer>
-          <ElHeader>
-            <NavBar />
-          </ElHeader>
-          <ElMain>
-            <RouterView />
-          </ElMain>
-        </ElContainer>
-      </div>
-    )
-  }
-}) 
+import Navbar from './components/Navbar';
+import Sidebar from './components/Sidebar';
+import HomePage from './pages/Home';
+import TemplatesPage from './pages/Templates';
+import ContentPage from './pages/Content';
+import Studio from './pages/Studio';
+
+const App: React.FC = () => {
+    const [isSidebarOpen, setSidebarOpen] = useState(true);
+    const location = useLocation();
+
+    console.log('[App] Current location:', location.pathname);
+
+    // Studio页面使用全屏布局，不需要Sidebar
+    const isStudioPage = location.pathname.startsWith('/generate') || 
+                         location.pathname.startsWith('/editor') || 
+                         location.pathname.startsWith('/studio');
+
+    const toggleSidebar = () => {
+        setSidebarOpen(!isSidebarOpen);
+    };
+
+    const contentVariants = {
+        open: { marginLeft: 240, transition: { type: 'spring', stiffness: 300, damping: 30 } },
+        closed: { marginLeft: 70, transition: { type: 'spring', stiffness: 300, damping: 30 } },
+    } as const;
+
+    // Studio页面使用简化布局
+    if (isStudioPage) {
+        return (
+            <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+                <Navbar onMenuClick={toggleSidebar} minimal />
+                <Box sx={{ flex: 1, overflow: 'hidden' }}>
+                    <Routes>
+                        <Route path="/generate" element={<Studio />} />
+                        <Route path="/editor" element={<Studio />} />
+                        <Route path="/editor/:projectId" element={<Studio />} />
+                        <Route path="/studio" element={<Studio />} />
+                    </Routes>
+                </Box>
+            </Box>
+        );
+    }
+
+    return (
+        <Box sx={{ display: 'flex' }}>
+            <Navbar onMenuClick={toggleSidebar} />
+            <Sidebar isOpen={isSidebarOpen} />
+            <Box
+                component={motion.main}
+                variants={contentVariants}
+                initial={false}
+                animate={isSidebarOpen ? 'open' : 'closed'}
+                sx={{ flexGrow: 1, paddingTop: '64px' }}
+            >
+                <Routes>
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/templates" element={<TemplatesPage />} />
+                    <Route path="/content" element={<ContentPage />} />
+                    {/* Fallback for editor routes if isStudioPage check fails or during transition */}
+                    <Route path="/editor/*" element={<Studio />} />
+                </Routes>
+            </Box>
+        </Box>
+    );
+};
+
+export default App;

@@ -21,7 +21,8 @@ class LLMService:
     
     def __init__(self):
         self.service = llm_service
-        self.available_providers = self.service.available_providers
+        # 兼容性属性：将新的方法映射到旧的属性名
+        self.available_providers = self.service.get_available_adapters()
     
     def analyze_content(
         self, 
@@ -196,5 +197,5 @@ llm_service_compat = LLMService()
 video_analyzer_compat = VideoAnalyzer()
 streaming_analyzer = StreamingAnalyzer()
 
-# 为了完全向后兼容，也可以直接暴露原来的变量名
-llm_service = llm_service_compat  # 注意：这会覆盖导入的新llm_service，需要注意 
+# 导出兼容性实例，避免覆盖原始导入
+# 注意：不要覆盖从service模块导入的llm_service 

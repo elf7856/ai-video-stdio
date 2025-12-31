@@ -69,13 +69,36 @@ class VideoDownloader:
     async def _download_youtube(self, url: str, output_dir: str, cookies_file: str = None) -> Dict:
         """下载YouTube视频"""
         try:
-            # 使用yt-dlp下载
+            # 增强yt-dlp配置，对抗反爬虫
             ydl_opts = {
                 'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-                'format': 'best[ext=mp4]/best',
+                'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',  # 限制质量减少被检测风险
                 'quiet': True,
                 'no_warnings': True,
-                'cookies': cookies_file
+                # 反爬虫配置
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'referer': 'https://www.youtube.com/',
+                'sleep_interval': 1,  # 请求间隔
+                'max_sleep_interval': 3,
+                'sleep_interval_subtitles': 1,
+                # 重试配置
+                'retries': 3,
+                'fragment_retries': 3,
+                'skip_unavailable_fragments': True,
+                # 网络配置
+                'socket_timeout': 30,
+                'http_chunk_size': 10485760,  # 10MB chunks
+                # cookies配置
+                'cookiefile': cookies_file if cookies_file else None,
+                # 自动从浏览器获取cookies（如果没有提供cookies文件）
+                'cookiesfrombrowser': ('chrome',) if not cookies_file else None,
+                # 额外的反检测配置
+                'extractor_args': {
+                    'youtube': {
+                        'skip': ['hls', 'dash'],  # 跳过复杂格式
+                        'player_skip': ['js'],   # 跳过JS解析
+                    }
+                }
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

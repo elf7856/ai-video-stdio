@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import Field
 from typing import Optional, List
 import os
 
@@ -11,25 +12,31 @@ class Settings(BaseSettings):
     port: int = 8000
     
     # API Keys
-    openai_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-    google_api_key: Optional[str] = None
-    elevenlabs_api_key: Optional[str] = None
+    elevenlabs_api_key: Optional[str] = Field(default=None, alias="ELEVENLABS_API_KEY")
     
     # 图像生成API Keys
-    dalle_api_key: Optional[str] = None  # 使用OpenAI API Key
-    midjourney_api_key: Optional[str] = None
-    stability_api_key: Optional[str] = None
-    replicate_api_key: Optional[str] = None
-    leonardo_api_key: Optional[str] = None
-    runway_api_key: Optional[str] = None
+    midjourney_api_key: Optional[str] = Field(default=None, alias="MIDJOURNEY_API_KEY")
+    stability_api_key: Optional[str] = Field(default=None, alias="STABILITY_API_KEY")
+    replicate_api_key: Optional[str] = Field(default=None, alias="REPLICATE_API_KEY")
+    leonardo_api_key: Optional[str] = Field(default=None, alias="LEONARDO_API_KEY")
+    
+    # 视频生成API Keys
+    runway_api_key: str = Field(default="", alias="RUNWAY_API_KEY", description="Runway ML API密钥")
+    luma_api_key: str = Field(default="", alias="LUMA_API_KEY", description="Luma Dream Machine API密钥")
+    pika_api_key: str = Field(default="", alias="PIKA_API_KEY", description="Pika Labs API密钥")
+    kling_api_key: str = Field(default="", alias="KLING_API_KEY", description="Kling AI API密钥")
+    google_api_key: str = Field(default="", alias="GOOGLE_API_KEY", description="Google Gemini API密钥")
+
+    # 多平台上传配置
+    google_client_id: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_ID", description="Google OAuth Client ID")
+    google_client_secret: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_SECRET", description="Google OAuth Client Secret")
     
     # 数据库配置
     database_url: str = "sqlite:///./video_creator.db"
     
     # 文件存储配置
-    upload_dir: str = "./uploads"
-    output_dir: str = "./outputs"
+    upload_dir: str = os.path.abspath("./uploads")
+    output_dir: str = os.path.abspath("./outputs")
     max_file_size: int = 100 * 1024 * 1024  # 100MB
     allowed_video_formats: list = [".mp4", ".avi", ".mov", ".mkv", ".wmv"]
     allowed_audio_formats: list = [".mp3", ".wav", ".m4a", ".aac"]
@@ -51,14 +58,10 @@ class Settings(BaseSettings):
     
     # 图像生成配置
     default_image_model: str = "stabilityai/stable-diffusion-2-1"
-    default_image_provider: str = "dalle"  # dalle, midjourney, stability, replicate, leonardo, runway, local
+    default_image_provider: str = "google_imagen"  # google_imagen, stability, replicate, leonardo, midjourney, local
     image_size: tuple = (512, 512)
-    
+
     # 图像生成API配置
-    dalle_model: str = "dall-e-3"
-    dalle_quality: str = "standard"  # standard, hd
-    dalle_style: str = "vivid"  # vivid, natural
-    
     stability_model: str = "stable-diffusion-xl-1024-v1-0"
     stability_engine: str = "stable-diffusion-xl-1024-v1-0"
     
@@ -81,25 +84,39 @@ class Settings(BaseSettings):
     
     # 安全配置
     secret_key: str = "your-secret-key-here-change-in-production"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
     allowed_hosts: str = "localhost,127.0.0.1,0.0.0.0"
     
     # 缓存配置
     cache_enabled: bool = True
     cache_ttl: int = 3600
+
+    # ============================================================
+    # 存储配置 (Storage Configuration)
+    # ============================================================
+    storage_type: str = Field(default="local", alias="STORAGE_TYPE", description="存储类型: local 或 oss")
     
+    # OSS / S3 配置
+    oss_access_key_id: Optional[str] = Field(default=None, alias="OSS_ACCESS_KEY_ID")
+    oss_access_key_secret: Optional[str] = Field(default=None, alias="OSS_ACCESS_KEY_SECRET")
+    oss_endpoint: Optional[str] = Field(default=None, alias="OSS_ENDPOINT", description="例如: oss-cn-hangzhou.aliyuncs.com")
+    oss_bucket_name: Optional[str] = Field(default=None, alias="OSS_BUCKET_NAME")
+    oss_region: Optional[str] = Field(default=None, alias="OSS_REGION")
+    
+    # CDN 配置 (如果不配置，默认使用 OSS 域名)
+    cdn_domain: Optional[str] = Field(default=None, alias="CDN_DOMAIN", description="例如: https://cdn.example.com")
+
     class Config:
         env_file = ".env"
         case_sensitive = False
         extra = "allow"  # 允许额外字段
+        populate_by_name = True  # 允许通过字段名或别名填充
 
 # 创建全局设置实例
 settings = Settings()
 
 # 辅助函数：检查API密钥是否可用
-def has_openai_key() -> bool:
-    """检查是否配置了有效的OpenAI API密钥"""
-    return bool(settings.openai_api_key and settings.openai_api_key.strip())
-
 def has_elevenlabs_key() -> bool:
     """检查是否配置了有效的ElevenLabs API密钥"""
     return bool(settings.elevenlabs_api_key and settings.elevenlabs_api_key.strip())
@@ -119,8 +136,6 @@ def has_leonardo_key() -> bool:
 def get_available_image_providers() -> list:
     """获取可用的图像生成服务提供商列表"""
     providers = []
-    if has_openai_key():
-        providers.append("dalle")
     if has_stability_key():
         providers.append("stability")
     if has_replicate_key():
@@ -132,10 +147,6 @@ def get_available_image_providers() -> list:
 def get_available_llm_providers() -> list:
     """获取可用的LLM服务提供商列表"""
     providers = []
-    if has_openai_key():
-        providers.append("openai")
-    if settings.anthropic_api_key and settings.anthropic_api_key.strip():
-        providers.append("anthropic")
     if settings.google_api_key and settings.google_api_key.strip():
         providers.append("google")
     return providers

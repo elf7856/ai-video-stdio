@@ -4,7 +4,10 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
 import shutil
+import tempfile
+import uuid
 from datetime import datetime
+import logging
 
 from app.models.video import Video, VideoEdit, VideoCreate, VideoResponse, VideoEditCreate, VideoEditResponse
 from app.services.video.processor import VideoProcessor
@@ -14,12 +17,13 @@ from app.core.config import settings
 from app.utils.database import get_db
 from app.services.video.downloader import VideoDownloader
 
+# AI导演系统导入 (暂时注释，等模型创建后启用)
+# from app.models.director import VideoCreationRequest, VideoResult, QualityLevel, SceneType
+
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
-# 初始化服务
-video_processor = VideoProcessor()
-video_analyzer = VideoAnalyzer()
-video_manager = VideoProcessingManager()
+from app import dependencies
 
 @router.post("/upload", response_model=VideoResponse)
 async def upload_video(
@@ -51,7 +55,7 @@ async def upload_video(
         raise HTTPException(status_code=500, detail=f"文件保存失败: {str(e)}")
     
     # 获取视频信息
-    video_info = video_processor.get_video_info(file_path)
+    video_info = dependencies.video_manager.processor.get_video_info(file_path)
     if "error" in video_info:
         raise HTTPException(status_code=500, detail=video_info["error"])
     
@@ -96,7 +100,7 @@ async def process_video_from_url(
         }
     else:
         # 同步处理
-        result = await video_manager.process_video_from_url(url, auto_analyze)
+        result = await dependencies.video_manager.process_video_from_url(url, auto_analyze)
         
         if result["success"]:
             # 保存到数据库
@@ -128,7 +132,7 @@ async def process_video_from_url(
 async def process_video_url_background(url: str, auto_analyze: bool, db: Session):
     """后台处理URL视频"""
     try:
-        result = await video_manager.process_video_from_url(url, auto_analyze)
+        result = await dependencies.video_manager.process_video_from_url(url, auto_analyze)
         
         if result["success"]:
             # 保存到数据库
@@ -148,12 +152,12 @@ async def process_video_url_background(url: str, auto_analyze: bool, db: Session
             db.add(video)
             db.commit()
             
-            print(f"视频处理完成: {result['video_title']}")
+            logger.info(f"视频处理完成: {result['video_title']}")
         else:
-            print(f"视频处理失败: {result['error']}")
+            logger.error(f"视频处理失败: {result['error']}")
             
     except Exception as e:
-        print(f"后台视频处理失败: {str(e)}")
+        logger.error(f"后台视频处理失败: {str(e)}", exc_info=True)
 
 @router.post("/{video_id}/analyze")
 async def analyze_video(
@@ -180,7 +184,7 @@ async def analyze_video_background(video_id: int, db: Session):
     
     try:
         # 使用视频管理器进行分析
-        analysis_result = await video_manager.analyze_video_content(video.original_path)
+        analysis_result = await dependencies.video_manager.analyze_video_content(video.original_path)
         
         if analysis_result["success"]:
             # 更新数据库
@@ -189,12 +193,12 @@ async def analyze_video_background(video_id: int, db: Session):
                 video.tags = analysis_result["analysis"]["tags"]
             
             db.commit()
-            print(f"视频分析完成: {video.title}")
+            logger.info(f"视频分析完成: {video.title}")
         else:
-            print(f"视频分析失败: {analysis_result['error']}")
+            logger.error(f"视频分析失败: {analysis_result['error']}")
         
     except Exception as e:
-        print(f"视频分析失败: {str(e)}")
+        logger.error(f"视频分析失败: {str(e)}", exc_info=True)
 
 @router.post("/{video_id}/summary")
 async def generate_video_summary(
@@ -209,7 +213,7 @@ async def generate_video_summary(
         raise HTTPException(status_code=404, detail="视频不存在")
     
     try:
-        summary_result = await video_manager.generate_video_summary(
+        summary_result = await dependencies.video_manager.generate_video_summary(
             video.original_path, summary_type
         )
         
@@ -226,7 +230,7 @@ async def generate_video_summary(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"摘要生成失败: {str(e)}")
 
-@router.post("/{video_id}/edit")
+@router.post("/{video_id}/edit-smart")
 async def edit_video(
     video_id: int,
     instruction: str,
@@ -239,7 +243,7 @@ async def edit_video(
         raise HTTPException(status_code=404, detail="视频不存在")
     
     try:
-        edit_result = await video_manager.process_natural_language_edit(
+        edit_result = await dependencies.video_manager.process_natural_language_edit(
             video.original_path, instruction
         )
         
@@ -323,7 +327,7 @@ async def process_video_edit_background(edit_id: int, db: Session):
         video = db.query(Video).filter(Video.id == edit.video_id).first()
         
         # 使用视频管理器处理编辑
-        edit_result = await video_manager.process_natural_language_edit(
+        edit_result = await dependencies.video_manager.process_natural_language_edit(
             video.original_path, edit.instruction
         )
         
@@ -350,7 +354,7 @@ async def process_video_edit_background(edit_id: int, db: Session):
         # 更新状态为失败
         edit.status = "failed"
         db.commit()
-        print(f"视频编辑失败: {str(e)}")
+        logger.error(f"视频编辑失败: {str(e)}", exc_info=True)
 
 @router.get("/{video_id}/download")
 async def download_video(video_id: int, db: Session = Depends(get_db)):
@@ -387,8 +391,7 @@ async def get_supported_platforms():
 async def get_video_info_from_url(url: str):
     """从URL获取视频信息（不下载）"""
     try:
-        downloader = VideoDownloader()
-        info = await downloader.get_video_info(url)
+        info = await dependencies.video_manager.downloader.get_video_info(url)
         
         if info["success"]:
             return {
@@ -424,9 +427,7 @@ async def download_video_with_cookies(
             temp_cookies_path = f.name
         
         try:
-            # 使用cookies下载视频
-            downloader = VideoDownloader()
-            result = await downloader.download_video(url, cookies_file=temp_cookies_path)
+            result = await dependencies.video_manager.downloader.download_video(url, cookies_file=temp_cookies_path)
             
             if result["success"]:
                 return {

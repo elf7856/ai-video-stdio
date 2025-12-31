@@ -6,6 +6,9 @@ import os
 from typing import Dict, List, Optional, Tuple
 from app.core.config import settings
 import tempfile
+import logging
+
+logger = logging.getLogger(__name__)
 
 class VideoProcessor:
     def __init__(self):
@@ -74,7 +77,7 @@ class VideoProcessor:
             
             return True
         except Exception as e:
-            print(f"插入内容失败: {str(e)}")
+            logger.error(f"插入内容失败: {str(e)}", exc_info=True)
             return False
     
     def replace_content(self, original_path: str, replacement_path: str,
@@ -106,7 +109,7 @@ class VideoProcessor:
             
             return True
         except Exception as e:
-            print(f"替换内容失败: {str(e)}")
+            logger.error(f"替换内容失败: {str(e)}", exc_info=True)
             return False
     
     def apply_style_filter(self, video_path: str, style: str, output_path: str) -> bool:
@@ -139,7 +142,7 @@ class VideoProcessor:
             
             return True
         except Exception as e:
-            print(f"应用滤镜失败: {str(e)}")
+            logger.error(f"应用滤镜失败: {str(e)}", exc_info=True)
             return False
     
     def add_text_overlay(self, video_path: str, text: str, position: str = "bottom",
@@ -150,7 +153,7 @@ class VideoProcessor:
             
             # 创建文字剪辑
             txt_clip = TextClip(text, fontsize=70, color='white', font='Arial-Bold')
-            txt_clip = txt_clip.set_pos(position).set_duration(clip.duration)
+            txt_clip = txt_clip.set_position(position).set_duration(clip.duration)
             
             # 合成视频
             final = CompositeVideoClip([clip, txt_clip])
@@ -169,7 +172,7 @@ class VideoProcessor:
             
             return output_path
         except Exception as e:
-            print(f"添加文字失败: {str(e)}")
+            logger.error(f"添加文字失败: {str(e)}", exc_info=True)
             return None
     
     def resize_video(self, video_path: str, target_size: Tuple[int, int],
@@ -177,8 +180,7 @@ class VideoProcessor:
         """调整视频尺寸"""
         try:
             clip = VideoFileClip(video_path)
-            resized = clip.resize(target_size)
-            
+            resized = clip.fx(resize, target_size)         
             resized.write_videofile(output_path,
                                   codec='libx264',
                                   audio_codec='aac',
@@ -189,7 +191,7 @@ class VideoProcessor:
             
             return True
         except Exception as e:
-            print(f"调整尺寸失败: {str(e)}")
+            logger.error(f"调整尺寸失败: {str(e)}", exc_info=True)
             return False
     
     def extract_audio(self, video_path: str, output_path: str) -> bool:
@@ -197,6 +199,8 @@ class VideoProcessor:
         try:
             clip = VideoFileClip(video_path)
             audio = clip.audio
+            if audio is None:
+                return False
             audio.write_audiofile(output_path)
             
             clip.close()
@@ -204,24 +208,141 @@ class VideoProcessor:
             
             return True
         except Exception as e:
-            print(f"提取音频失败: {str(e)}")
+            logger.error(f"提取音频失败: {str(e)}", exc_info=True)
             return False
     
     def merge_videos(self, video_paths: List[str], output_path: str) -> bool:
-        """合并多个视频"""
+        """顺序合并多个视频为长视频"""
+        return self.merge_videos_with_audio(video_paths, output_path, None)
+    
+    def merge_videos_with_audio(self, video_paths: List[str], output_path: str, 
+                               narration_audio_path: Optional[str] = None,
+                               audio_volume: float = 0.8, video_volume: float = 0.3) -> bool:
+        """顺序合并多个视频为长视频，并可选添加旁白音频"""
         try:
-            clips = [VideoFileClip(path) for path in video_paths]
-            final = CompositeVideoClip(clips)
+            from moviepy.editor import concatenate_videoclips, CompositeAudioClip
             
-            final.write_videofile(output_path,
-                                codec='libx264',
-                                audio_codec='aac')
+            logger.info(f"开始合并 {len(video_paths)} 个视频片段...")
+            clips = []
             
+            for i, path in enumerate(video_paths):
+                if not os.path.exists(path):
+                    logger.warning(f"警告: 视频文件不存在 {path}")
+                    continue
+                
+                try:
+                    clip = VideoFileClip(path)
+                    # 确保所有视频有相同的分辨率和帧率
+                    if i == 0:
+                        # 第一个视频作为参考
+                        target_size = clip.size
+                        target_fps = clip.fps
+                    else:
+                        # 其他视频调整到相同参数
+                        if clip.size != target_size:
+                            clip = clip.resize(target_size)
+                        if abs(clip.fps - target_fps) > 0.1:
+                            clip = clip.set_fps(target_fps)
+                    
+                    clips.append(clip)
+                    logger.debug(f"加载视频片段 {i+1}: {os.path.basename(path)} ({clip.duration:.1f}秒)")
+                    
+                except Exception as e:
+                    logger.error(f"加载视频片段失败 {path}: {e}")
+                    continue
+            
+            if not clips:
+                logger.error("错误: 没有可用的视频片段")
+                return False
+            
+            # 顺序连接视频
+            if len(clips) == 1:
+                final_video = clips[0]
+            else:
+                logger.info(f"顺序连接 {len(clips)} 个视频片段...")
+                final_video = concatenate_videoclips(clips, method="compose")
+            
+            # 如果有旁白音频，添加到视频中
+            if narration_audio_path and os.path.exists(narration_audio_path):
+                logger.info(f"添加旁白音频: {narration_audio_path}")
+                try:
+                    # 加载旁白音频
+                    narration_audio = AudioFileClip(narration_audio_path)
+                    
+                    # 调整旁白音频长度匹配视频
+                    video_duration = final_video.duration
+                    if narration_audio.duration > video_duration:
+                        # 如果音频太长，截断
+                        narration_audio = narration_audio.subclip(0, video_duration)
+                    elif narration_audio.duration < video_duration:
+                        # 如果音频太短，循环播放或静音补齐
+                        logger.warning(f"旁白音频 ({narration_audio.duration:.1f}s) 短于视频 ({video_duration:.1f}s)")
+                    
+                    # 调整音量
+                    narration_audio = narration_audio.volumex(audio_volume)
+                    
+                    # 获取原视频音频并降低音量
+                    if final_video.audio is not None:
+                        original_audio = final_video.audio.volumex(video_volume)
+                        # 混合音频
+                        mixed_audio = CompositeAudioClip([original_audio, narration_audio])
+                    else:
+                        # 如果原视频没有音频，直接使用旁白
+                        mixed_audio = narration_audio
+                    
+                    # 设置新音频
+                    final_video = final_video.set_audio(mixed_audio)
+                    logger.info("旁白音频添加成功")
+                    
+                except Exception as e:
+                    logger.error(f"添加旁白音频失败: {e}", exc_info=True)
+                    # 继续处理，即使音频失败
+            
+            logger.info(f"写入最终视频: {output_path}")
+            final_video.write_videofile(output_path,
+                                      codec='libx264',
+                                      audio_codec='aac',
+                                      temp_audiofile='temp-audio.m4a',
+                                      remove_temp=True)
+            
+            # 清理资源
             for clip in clips:
                 clip.close()
-            final.close()
+            final_video.close()
             
-            return True
+            # 验证输出文件
+            if os.path.exists(output_path):
+                file_size = os.path.getsize(output_path)
+                logger.info(f"合并完成: {output_path} ({file_size:,} bytes)")
+                return True
+            else:
+                logger.error("错误: 输出文件未生成")
+                return False
+                
         except Exception as e:
-            print(f"合并视频失败: {str(e)}")
-            return False 
+            logger.error(f"合并视频失败: {str(e)}", exc_info=True)
+            return False
+
+    def merge_with_narration(self, video_path: str, narration_audio: str,
+                            output_path: str, audio_volume: float = 1.0,
+                            video_volume: float = 0.3) -> bool:
+        """
+        为单个视频添加旁白音频
+
+        Args:
+            video_path: 原视频路径
+            narration_audio: 旁白音频路径
+            output_path: 输出视频路径
+            audio_volume: 旁白音量 (0.0-1.0)
+            video_volume: 原视频音量 (0.0-1.0)
+
+        Returns:
+            是否成功
+        """
+        return self.merge_videos_with_audio(
+            video_paths=[video_path],
+            output_path=output_path,
+            narration_audio_path=narration_audio,
+            audio_volume=audio_volume,
+            video_volume=video_volume
+        ) 

@@ -240,28 +240,51 @@ def get_sample_urls():
         "教育内容": "https://www.youtube.com/watch?v=9bZkp7q19f0",  # 示例教育视频
     }
 
-async def interactive_mode():
-    """交互模式"""
+async def interactive_mode_enhanced():
+    """增强的交互模式，支持本地文件"""
     print("\n🎯 交互式视频分析")
     print("-" * 30)
     
     while True:
         print("\n请选择:")
-        print("1. 输入视频URL分析")
-        print("2. 使用示例URL")
-        print("3. 退出")
+        print("1. 分析本地视频文件")
+        print("2. 分析在线视频URL")
+        print("3. 使用示例URL")
+        print("4. 退出")
         
-        choice = input("\n请输入选择 (1-3): ").strip()
+        try:
+            choice = input("\n请输入选择 (1-4): ").strip()
+        except EOFError:
+            print("\n👋 感谢使用！")
+            break
         
         if choice == "1":
-            video_url = input("\n请输入视频URL: ").strip()
-            if video_url:
-                results = await analyze_video_content(video_url)
-                display_results(results)
-            else:
-                print("❌ URL不能为空")
+            try:
+                video_path = input("\n请输入本地视频文件路径: ").strip()
+                if video_path:
+                    # 移除可能的引号
+                    video_path = video_path.strip('"\'')
+                    results = await analyze_local_video(video_path)
+                    display_results(results)
+                else:
+                    print("❌ 路径不能为空")
+            except EOFError:
+                print("\n👋 感谢使用！")
+                break
                 
         elif choice == "2":
+            try:
+                video_url = input("\n请输入视频URL: ").strip()
+                if video_url:
+                    results = await analyze_video_content(video_url)
+                    display_results(results)
+                else:
+                    print("❌ URL不能为空")
+            except EOFError:
+                print("\n👋 感谢使用！")
+                break
+                
+        elif choice == "3":
             sample_urls = get_sample_urls()
             print("\n示例视频:")
             for i, (name, url) in enumerate(sample_urls.items(), 1):
@@ -275,21 +298,93 @@ async def interactive_mode():
                     display_results(results)
                 else:
                     print("❌ 选择超出范围")
-            except ValueError:
-                print("❌ 请输入有效数字")
+            except (ValueError, EOFError):
+                if EOFError:
+                    print("\n👋 感谢使用！")
+                    break
+                else:
+                    print("❌ 请输入有效数字")
                 
-        elif choice == "3":
+        elif choice == "4":
             print("👋 感谢使用！")
             break
         else:
             print("❌ 无效选择，请重新输入")
 
+async def analyze_local_video(video_path: str) -> dict:
+    """
+    分析本地视频文件
+    
+    Args:
+        video_path: 本地视频文件路径
+        
+    Returns:
+        包含分析结果的字典
+    """
+    print(f"🎬 正在分析本地视频: {os.path.basename(video_path)}")
+    print("-" * 50)
+    
+    try:
+        # 检查文件是否存在
+        if not os.path.exists(video_path):
+            return {
+                "success": False,
+                "error": f"视频文件不存在: {video_path}"
+            }
+        
+        # 获取文件信息
+        file_size = os.path.getsize(video_path) / (1024 * 1024)  # MB
+        print(f"📁 文件大小: {file_size:.1f}MB")
+        
+        # 构造视频元数据
+        video_metadata = {
+            "title": os.path.splitext(os.path.basename(video_path))[0],
+            "platform": "本地文件",
+            "file_path": video_path,
+            "file_size_mb": file_size
+        }
+        
+        # 步骤1: AI内容分析
+        print("\n🤖 AI分析中...")
+        
+        # 使用VideoAnalyzer进行分析
+        analysis_result = video_analyzer.analyze_video_content(
+            video_info=video_metadata,
+            timeout=30,
+            retry_count=2
+        )
+        
+        # 生成改进建议
+        suggestions = None
+        if analysis_result.get("success"):
+            print("💡 生成改进建议...")
+            suggestions = video_analyzer.suggest_improvements(
+                analysis_result,
+                timeout=20,
+                retry_count=1
+            )
+        
+        # 返回结果
+        return {
+            "success": True,
+            "video_info": video_metadata,
+            "content_analysis": analysis_result,
+            "improvement_suggestions": suggestions,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"分析过程出错: {str(e)}"
+        }
+
 async def main():
     """主函数"""
     print("🚀 视频内容AI分析工具")
     print("=" * 60)
-    print("功能: 输入视频URL，获得AI生成的内容总结和改进建议")
-    print("支持: YouTube, B站, TikTok, Instagram等主流平台")
+    print("功能: 分析视频内容，获得AI生成的内容总结和改进建议")
+    print("支持: 本地视频文件 + 在线视频URL")
     print("=" * 60)
     
     # 检查环境
@@ -300,14 +395,20 @@ async def main():
     try:
         # 检查命令行参数
         if len(sys.argv) > 1:
-            # 直接分析命令行传入的URL
-            video_url = sys.argv[1]
-            print(f"\n📌 分析指定URL: {video_url}")
-            results = await analyze_video_content(video_url)
+            input_path = sys.argv[1]
+            
+            # 判断是本地文件还是URL
+            if os.path.exists(input_path):
+                print(f"\n📁 分析本地视频: {input_path}")
+                results = await analyze_local_video(input_path)
+            else:
+                print(f"\n🌐 分析在线视频: {input_path}")
+                results = await analyze_video_content(input_path)
+            
             display_results(results)
         else:
-            # 进入交互模式
-            await interactive_mode()
+            # 进入交互模式，添加本地文件选项
+            await interactive_mode_enhanced()
             
     except KeyboardInterrupt:
         print("\n\n⚠️ 用户中断操作")

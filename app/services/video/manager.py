@@ -1,8 +1,9 @@
 import os
 import asyncio
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
 import tempfile
+import logging
 
 from app.services.video.downloader import VideoDownloader
 from app.services.video.processor import VideoProcessor
@@ -11,18 +12,22 @@ from app.services.image.generator import ImageServiceManager
 from app.services.tts.generator import TTSGenerator
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 class VideoProcessingManager:
     """视频处理流程管理器"""
-    
-    def __init__(self):
-        self.downloader = VideoDownloader()
-        self.processor = VideoProcessor()
-        self.analyzer = VideoAnalyzer()
-        self.image_manager = ImageServiceManager()
-        self.tts_generator = TTSGenerator()
-        
+
+    def __init__(self, downloader: VideoDownloader, processor: VideoProcessor, analyzer: VideoAnalyzer, image_manager: ImageServiceManager, tts_generator: TTSGenerator):
+        self.downloader = downloader
+        self.processor = processor
+        self.analyzer = analyzer
+        self.image_manager = image_manager
+        self.tts_generator = tts_generator
+
         # 延迟导入ASR服务
         self._asr_service = None
+
+        logger.info("VideoProcessingManager初始化完成")
     
     @property
     def asr_service(self):
@@ -32,7 +37,7 @@ class VideoProcessingManager:
                 from app.services.audio.asr_service import asr_service
                 self._asr_service = asr_service
             except ImportError:
-                print("ASR服务不可用")
+                logger.warning("ASR服务不可用")
                 self._asr_service = None
         return self._asr_service
     
@@ -43,7 +48,7 @@ class VideoProcessingManager:
         """从URL处理视频的完整流程"""
         try:
             # 步骤1: 下载视频
-            print(f"开始下载视频: {url}")
+            logger.info(f"开始下载视频: {url}")
             download_result = await self.downloader.download_video(url, output_dir)
             
             if not download_result["success"]:
@@ -57,7 +62,7 @@ class VideoProcessingManager:
             video_title = download_result["title"]
             
             # 步骤2: 获取视频基本信息
-            print("获取视频基本信息...")
+            logger.info("获取视频基本信息...")
             video_info = self.processor.get_video_info(video_path)
             
             if "error" in video_info:
@@ -70,7 +75,7 @@ class VideoProcessingManager:
             # 步骤3: 自动分析视频内容（可选）
             analysis_result = None
             if auto_analyze:
-                print("分析视频内容...")
+                logger.info("分析视频内容...")
                 
                 # 构建完整的视频信息
                 full_video_info = {
@@ -89,20 +94,54 @@ class VideoProcessingManager:
                 )
             
             # 步骤4: 提取关键帧（用于进一步分析）
-            print("提取关键帧...")
+            logger.info("提取关键帧...")
             frames_dir = os.path.join(os.path.dirname(video_path), "frames")
             os.makedirs(frames_dir, exist_ok=True)
             
-            # 提取视频开始、中间、结束的帧
+            # 智能关键帧提取策略
             duration = video_info["duration"]
-            key_times = [0, duration/2, duration-1] if duration > 2 else [0]
-            
             key_frames = []
+            
+            if duration <= 60:  # 1分钟内：每3秒一帧
+                interval = 3
+                key_times = [i * interval for i in range(int(duration // interval) + 1)]
+            elif duration <= 300:  # 5分钟内：每10秒一帧
+                interval = 10
+                key_times = [i * interval for i in range(int(duration // interval) + 1)]
+            elif duration <= 900:  # 15分钟内：每15秒一帧
+                interval = 15
+                key_times = [i * interval for i in range(int(duration // interval) + 1)]
+            elif duration <= 1800:  # 30分钟内：每20秒一帧
+                interval = 20
+                key_times = [i * interval for i in range(int(duration // interval) + 1)]
+            else:  # 超长视频：每30秒一帧
+                interval = 30
+                key_times = [i * interval for i in range(int(duration // interval) + 1)]
+            
+            # 确保包含开始和结束帧
+            if 0 not in key_times:
+                key_times.insert(0, 0)
+            if duration - 1 not in key_times and duration > 1:
+                key_times.append(duration - 1)
+            
+            # 限制最大帧数（避免过多帧导致成本过高）
+            max_frames = 20
+            if len(key_times) > max_frames:
+                # 均匀采样
+                step = len(key_times) // max_frames
+                key_times = key_times[::step][:max_frames]
+            
+            logger.info(f"提取关键帧: {len(key_times)}帧，间隔{interval}秒")
+            
             for i, time in enumerate(key_times):
                 if time >= 0 and time < duration:
                     frames = self.processor.extract_frames(video_path, time, time+0.1, frames_dir)
                     if frames:
-                        key_frames.append(frames[0])
+                        key_frames.append({
+                            "frame_path": frames[0],
+                            "timestamp": time,
+                            "index": i
+                        })
             
             return {
                 "success": True,
@@ -144,12 +183,34 @@ class VideoProcessingManager:
                 "platform": "本地"
             }
             
-            # 使用视频分析器进行分析（集成ASR）
-            analysis_result = self.analyzer.analyze_video_content(
-                video_info=full_video_info,
-                use_asr=use_asr,
-                language=language
-            )
+            # 根据是否使用ASR决定分析方式
+            if use_asr and self.asr_service:
+                try:
+                    # 使用ASR转录
+                    logger.info("正在进行语音识别...")
+                    asr_result = await self.asr_service.transcribe_video(video_path, language)
+                    if asr_result and asr_result.text:
+                        logger.info(f"语音识别完成: {len(asr_result.text)} 字符")
+                        # 使用转录文本进行分析
+                        analysis_result = self.analyzer.analyze_video_content(
+                            video_info=full_video_info,
+                            extracted_text=asr_result.text
+                        )
+                    else:
+                        logger.warning("语音识别失败，使用基础视频分析")
+                        analysis_result = self.analyzer.analyze_video_content(
+                            video_info=full_video_info
+                        )
+                except Exception as e:
+                    logger.error(f"ASR处理失败: {str(e)}，使用基础视频分析", exc_info=True)
+                    analysis_result = self.analyzer.analyze_video_content(
+                        video_info=full_video_info
+                    )
+            else:
+                # 不使用ASR，直接分析
+                analysis_result = self.analyzer.analyze_video_content(
+                    video_info=full_video_info
+                )
             
             # 提取关键帧进行图像分析
             frames_dir = tempfile.mkdtemp()
@@ -187,7 +248,7 @@ class VideoProcessingManager:
                 }
             
             # 使用ASR转录视频
-            print("正在进行语音识别...")
+            logger.info("正在进行语音识别...")
             asr_result = await self.asr_service.transcribe_video(video_path, language)
             
             if not asr_result or not asr_result.text:
@@ -196,7 +257,7 @@ class VideoProcessingManager:
                     "error": "语音识别失败或没有检测到语音内容"
                 }
             
-            print(f"语音识别完成: {len(asr_result.text)} 字符")
+            logger.info(f"语音识别完成: {len(asr_result.text)} 字符")
             
             # 获取视频基本信息
             video_info = self.processor.get_video_info(video_path)
@@ -618,4 +679,125 @@ class VideoProcessingManager:
             return output_path
             
         except Exception as e:
-            return f"视频摘要生成失败: {str(e)}" 
+            return f"视频摘要生成失败: {str(e)}"
+    
+    # ==================== AI导演系统集成方法 ====================
+    
+    async def create_video_with_ai_director(self, request: dict) -> dict:
+        """
+        使用AI导演系统创建视频
+        这是新的核心视频创作方法
+        """
+        logger.info(f"开始AI导演视频创作，请求ID: {request.id}")
+        
+        try:
+            # 委托给AI导演控制器处理
+            result = await self.ai_director.create_video(request)
+            
+            logger.info(f"AI导演视频创作完成，结果ID: {result.id}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"AI导演视频创作失败: {str(e)}")
+            return {
+                "request_id": request.get("id", ""),
+                "shot_plan_id": "",
+                "video_path": "",
+                "status": "failed",
+                "generation_log": [f"创作失败: {str(e)}"]
+            }
+    
+    async def get_ai_director_status(self, request_id: str) -> Dict[str, Any]:
+        """
+        获取AI导演创作状态
+        """
+        return await self.ai_director.get_creation_status(request_id)
+    
+    async def cancel_ai_director_creation(self, request_id: str) -> bool:
+        """
+        取消AI导演创作任务
+        """
+        return await self.ai_director.cancel_creation(request_id)
+    
+    def get_supported_video_apis(self) -> List[str]:
+        """
+        获取支持的视频生成API列表
+        """
+        return self.ai_director.get_supported_apis()
+    
+    def estimate_ai_director_cost(self, request: dict) -> float:
+        """
+        估算AI导演创作成本
+        """
+        return self.ai_director.estimate_cost(request)
+    
+    async def create_video_from_description(self, 
+                                          description: str,
+                                          duration_target: int = 180,
+                                          quality_level: str = "professional",
+                                          source_video: Optional[str] = None,
+                                          style_preferences: Optional[Dict] = None) -> dict:
+        """
+        便捷方法：基于自然语言描述创建视频
+        """
+        logger.info(f"基于描述创建视频: {description[:50]}...")
+        
+        # 创建视频创作请求
+        request = {
+            "description": description,
+            "source_video": source_video,
+            "duration_target": duration_target,
+            "quality_level": quality_level,
+            "style_preferences": style_preferences or {},
+            "audio_requirements": {
+                "voice_priority": True,  # 专业音频设计
+                "bgm_volume": 0.3,
+                "noise_reduction": True
+            }
+        }
+        
+        # 使用AI导演系统创建
+        return await self.create_video_with_ai_director(request)
+    
+    async def create_video_from_source(self,
+                                     source_video_path: str,
+                                     instruction: str,
+                                     target_duration: Optional[int] = None) -> dict:
+        """
+        基于源视频和指令创建新视频（如影视解说）
+        """
+        logger.info(f"基于源视频创建: {source_video_path}")
+        
+        # 先分析源视频
+        try:
+            source_analysis = await self.analyze_video_content(source_video_path)
+            
+            # 如果没有指定目标时长，使用源视频时长的一半
+            if not target_duration:
+                target_duration = int(source_analysis.get("duration", 180) * 0.5)
+            
+            # 创建请求
+            request = {
+                "description": instruction,
+                "source_video": source_video_path,
+                "duration_target": target_duration,
+                "quality_level": "professional",
+                "scene_type": "explanation",  # 解说类视频
+                "audio_requirements": {
+                    "voice_priority": True,
+                    "background_music": "subtle",
+                    "voice_enhancement": True
+                }
+            }
+            
+            return await self.create_video_with_ai_director(request)
+            
+        except Exception as e:
+            logger.error(f"基于源视频创建失败: {str(e)}")
+            return {
+                "request_id": "",
+                "shot_plan_id": "",
+                "video_path": "",
+                "status": "failed",
+                "generation_log": [f"创建失败: {str(e)}"]
+            } 

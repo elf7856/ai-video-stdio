@@ -1,260 +1,95 @@
-# AI视频创作平台
+# AI视频创作平台 (AI Video Creator Platform)
 
-一个基于AI的智能视频创作和处理平台，支持从视频链接下载、内容分析、自然语言编辑、TTS语音合成、AI图像生成等功能。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🌟 主要功能
+一个AI驱动的视频创作平台，专注于**将用户的文字稿件自动转换为包含多个镜头的专业视频**。
 
-### 1. 视频下载与处理
-- **多平台支持**: YouTube、Bilibili、TikTok、Instagram、Twitter等
-- **智能下载**: 自动识别平台并下载最佳质量视频
-- **格式转换**: 支持多种视频格式的转换和处理
+本平台的核心是“AI导演”系统，它模仿人类导演的工作流程，负责从内容理解、智能分镜、时长分配到视频生成的端到端自动化流程，旨在将传统数小时甚至数天的视频制作周期缩短到分钟级别。
 
-### 2. 视频内容分析
-- **AI分析**: 使用大语言模型分析视频内容、主题、情感
-- **关键帧提取**: 自动提取视频关键帧进行进一步分析
-- **标签生成**: 智能生成视频标签和分类
+> 详细的 **[架构设计](docs/architecture.md)**, **[功能列表](docs/features.md)**, **[API参考](docs/api_reference.md)**, 和 **[安装指南](docs/setup.md)** 请查阅 `docs` 目录。
 
-### 3. 自然语言编辑
-- **智能理解**: 理解自然语言编辑指令
-- **自动生成**: 根据指令自动生成图像、音频等内容
-- **视频合成**: 将生成的内容智能插入到视频中
+## 🌟 核心功能
 
-### 4. AI图像生成
-- **多API支持**: DALL-E、Stability AI、Replicate、Leonardo AI等
-- **风格预设**: 支持多种艺术风格和效果
-- **批量生成**: 支持批量图像生成和处理
+- **AI导演系统**:
+  - **智能脚本分析**: 使用LLM深度理解脚本，并自动切分为逻辑连贯的场景。
+  - **自动分镜规划**: 为每个场景设计专业的镜头（Shot），并生成高质量的视频生成Prompt。
+  - **精确时长分配**: 根据内容重要性和用户目标，为每个镜头（3-15秒）分配合理的时长。
+- **多API视频生成**:
+  - 集成并管理多个主流视频生成API（如Google Veo, Runway等）。
+  - 根据成本和内容类型智能选择API，并支持失败重试。
+- **模块化AI工具箱**:
+  - **视频处理**: 从URL下载视频、内容分析、关键帧提取。
+  - **图像生成**: 集成DALL-E, Stable Diffusion等，支持本地模型。
+  - **语音合成 (TTS)**: 集成Edge TTS等，并提供系统TTS作为备用。
+- **标准化项目管理**:
+  - 为每个视频生成任务创建独立、结构化的项目目录。
+  - 完整记录分镜计划、元数据和生成日志，便于追溯和管理。
 
-### 5. TTS语音合成
-- **多引擎支持**: Edge TTS、ElevenLabs等
-- **多语言支持**: 支持多种语言和声音
-- **情感控制**: 支持情感和语调的调整
+## 🚀 快速上手
 
-## 🚀 快速开始
+### 1. 环境准备
+- Python 3.11+
+- FFmpeg
 
-### 1. 安装依赖
-
+### 2. 安装与配置
 ```bash
 # 克隆项目
 git clone <repository-url>
 cd video_creator_platform
 
-# 安装依赖
+# 安装依赖 (建议在虚拟环境中)
 pip install -r requirements.txt
+
+# 创建并配置环境变量
+cp .env.example .env
+# 然后编辑 .env 文件，至少填入一个AI服务的API密钥，如 OPENAI_API_KEY
 ```
 
-### 2. 配置环境变量
-
-创建 `.env` 文件并配置必要的API密钥：
-
-```env
-# OpenAI API
-OPENAI_API_KEY=your_openai_api_key
-
-# 图像生成API
-STABILITY_API_KEY=your_stability_api_key
-REPLICATE_API_KEY=your_replicate_api_key
-LEONARDO_API_KEY=your_leonardo_api_key
-
-# TTS API
-ELEVENLABS_API_KEY=your_elevenlabs_api_key
-
-# 其他配置
-UPLOAD_DIR=./uploads
-MAX_FILE_SIZE=100000000
-```
-
-### 3. 运行服务器
-
+### 3. 启动服务
 ```bash
-# 启动开发服务器
-python -m uvicorn app.main:app --reload
-
-# 访问API文档
-# http://localhost:8000/docs
+# 启动后端API服务器
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## 📋 完整流程示例
+服务启动后，即可通过API与平台交互。
+- **API文档**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **健康检查**: [http://localhost:8000/health](http://localhost:8000/health)
 
-### 从URL处理视频的完整流程
-
-```python
-from app.services.video.manager import VideoProcessingManager
-
-# 初始化视频处理管理器
-video_manager = VideoProcessingManager()
-
-# 1. 从URL下载并分析视频
-result = await video_manager.process_video_from_url(
-    url="https://www.youtube.com/watch?v=example",
-    auto_analyze=True
-)
-
-if result["success"]:
-    print(f"视频下载成功: {result['video_title']}")
-    print(f"分析结果: {result['analysis']}")
-    
-    # 2. 生成视频摘要
-    summary = await video_manager.generate_video_summary(
-        result["video_path"], 
-        summary_type="text"
-    )
-    
-    # 3. 自然语言编辑
-    edit_result = await video_manager.process_natural_language_edit(
-        result["video_path"],
-        "在视频开头添加一个标题文字"
-    )
-```
-
-### API使用示例
-
-#### 1. 从URL处理视频
-
+## 🧪 运行测试
+在开始使用前，建议运行测试以确保所有组件正常工作。
 ```bash
-curl -X POST "http://localhost:8000/api/videos/process-url" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "url": "https://www.youtube.com/watch?v=example",
-       "auto_analyze": true
-     }'
+# 运行完整的测试套件
+pytest tests/
 ```
 
-#### 2. 生成视频摘要
-
-```bash
-curl -X POST "http://localhost:8000/api/videos/1/summary" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "summary_type": "text"
-     }'
+## 🗂️ 项目结构
 ```
-
-#### 3. 自然语言编辑
-
-```bash
-curl -X POST "http://localhost:8000/api/videos/1/edit" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "instruction": "在视频开头添加一个标题文字"
-     }'
-```
-
-## 🏗️ 项目结构
-
-```
-video_creator_platform/
-├── app/
-│   ├── api/                    # API路由
-│   │   ├── videos.py          # 视频处理API
-│   │   ├── images.py          # 图像生成API
-│   │   └── tts.py             # TTS API
-│   ├── services/              # 核心服务
-│   │   ├── video/             # 视频处理服务
-│   │   │   ├── downloader.py  # 视频下载器
-│   │   │   ├── processor.py   # 视频处理器
-│   │   │   └── manager.py     # 视频管理器
-│   │   ├── image/             # 图像生成服务
-│   │   │   └── generator.py   # 图像生成器
-│   │   ├── tts/               # TTS服务
-│   │   │   └── generator.py   # TTS生成器
-│   │   └── llm/               # LLM服务
-│   │       └── analyzer.py    # 内容分析器
-│   ├── models/                # 数据模型
-│   ├── prompts/               # 提示词模板
-│   └── core/                  # 核心配置
-├── tests/                     # 测试文件
-│   ├── test_video_flow.py     # 视频流程测试
-│   ├── test_image_generation.py # 图像生成测试
-│   ├── test_prompt_system.py  # 提示词系统测试
-│   ├── test_basic.py          # 基础功能测试
-│   ├── test_system.py         # 系统集成测试
-│   ├── conftest.py            # pytest配置
-│   └── __init__.py            # 测试包初始化
-├── examples/                  # 使用示例
-├── docs/                      # 文档
-├── uploads/                   # 上传文件目录
-├── outputs/                   # 输出文件目录
-├── run_tests.py               # 测试运行脚本
-└── run.py                     # 应用启动脚本
-```
-
-## 🔧 核心组件
-
-### VideoProcessingManager
-视频处理的核心管理器，整合了下载、分析、编辑等功能：
-
-- `process_video_from_url()`: 从URL处理视频的完整流程
-- `analyze_video_content()`: 分析视频内容
-- `generate_video_summary()`: 生成视频摘要
-- `process_natural_language_edit()`: 处理自然语言编辑指令
-
-### VideoDownloader
-支持多平台的视频下载器：
-
-- YouTube、Bilibili、TikTok、Instagram、Twitter
-- 自动识别平台并选择最佳下载策略
-- 支持获取视频信息而不下载
-
-### ImageServiceManager
-多API图像生成服务：
-
-- DALL-E、Stability AI、Replicate、Leonardo AI
-- 自动故障转移和负载均衡
-- 支持多种艺术风格和预设
-
-## 📚 API文档
-
-启动服务器后访问 `http://localhost:8000/docs` 查看完整的API文档。
-
-### 主要端点
-
-- `POST /api/videos/process-url`: 从URL处理视频
-- `POST /api/videos/{id}/analyze`: 分析视频内容
-- `POST /api/videos/{id}/summary`: 生成视频摘要
-- `POST /api/videos/{id}/edit`: 自然语言编辑
-- `POST /api/images/generate`: 生成图像
-- `POST /api/tts/generate`: 生成语音
-
-## 🧪 测试
-
-### 运行所有测试
-```bash
-# 使用测试运行脚本
-python run_tests.py
-
-# 或使用pytest
-python -m pytest tests/ -v
-```
-
-### 运行单个测试
-```bash
-# 运行视频流程测试
-python tests/test_video_flow.py
-
-# 运行图像生成测试
-python tests/test_image_generation.py
-
-# 运行提示词系统测试
-python tests/test_prompt_system.py
-```
-
-### 运行示例
-```bash
-# 运行完整流程示例
-python examples/video_processing_flow.py
+.
+├── app/                  # 核心应用代码
+│   ├── api/              # API路由
+│   ├── core/             # 核心配置与服务
+│   ├── models/           # Pydantic数据模型
+│   └── services/         # 业务逻辑服务
+│       ├── director/     # AI导演系统核心
+│       ├── image/        # 图像生成服务
+│       ├── tts/          # TTS服务
+│       └── video/        # 视频处理服务
+├── docs/                 # 详细文档
+│   ├── architecture.md
+│   ├── api_reference.md
+│   ├── features.md
+│   ├── setup.md
+│   └── archive/          # 旧文档归档
+├── tests/                # 测试代码
+├── .env.example          # 环境变量示例
+├── docker-compose.yml    # Docker部署配置
+└── requirements.txt      # Python依赖
 ```
 
 ## 🤝 贡献
 
-欢迎提交Issue和Pull Request！
+欢迎提交Issue和Pull Request。
 
 ## 📄 许可证
 
-MIT License
-
-## 🔗 相关链接
-
-- [FastAPI文档](https://fastapi.tiangolo.com/)
-- [yt-dlp文档](https://github.com/yt-dlp/yt-dlp)
-- [MoviePy文档](https://zulko.github.io/moviepy/)
-- [LiteLLM文档](https://docs.litellm.ai/) 
+本项目采用 [MIT License](LICENSE)。

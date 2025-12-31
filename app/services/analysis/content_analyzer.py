@@ -233,17 +233,16 @@ class ContentAnalyzer:
             logger.warning(f"使用提示词模板失败: {e}，使用默认模板")
             # 回退到简单模板
             return f"""请分析以下内容并提供简洁的总结：
+                内容：
+                {content}
 
-内容：
-{content}
+                请从以下角度进行分析：
+                1. 主要内容概述
+                2. 关键信息要点
+                3. 内容特点和风格
+                4. 目标受众分析
 
-请从以下角度进行分析：
-1. 主要内容概述
-2. 关键信息要点
-3. 内容特点和风格
-4. 目标受众分析
-
-请用简洁明了的中文回复，重点突出。"""
+                请用简洁明了的中文回复，重点突出。"""
 
     def _build_summary_prompt(self, content: str, summary_length: str) -> str:
         """构建摘要提示词"""

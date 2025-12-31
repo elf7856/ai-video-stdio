@@ -5,6 +5,7 @@ import {
 import { PlayArrow as PlayIcon, Pause as PauseIcon, Crop169 as Landscape, CropPortrait as Portrait, CropSquare as Square } from '@mui/icons-material';
 import { useWorkflowStore } from '../../stores/workflowStore';
 import apiClient from '../../api/client';
+import { getFullUrl } from '../../utils/url';
 
 const PreviewPanel: React.FC = () => {
   const { taskStatus, shots, outputConfig, setOutputConfig } = useWorkflowStore();
@@ -17,23 +18,10 @@ const PreviewPanel: React.FC = () => {
   const estimatedDuration = shots.reduce((a:number, b:any)=>a+b.duration, 0) || 60;
   const displayDuration = duration || estimatedDuration;
 
-  // 【核心修复】更加稳健的 URL 拼接逻辑
-  const getFullUrl = (path?: string) => {
-    if (!path) return '';
-    if (path.startsWith('http')) return path;
-    
-    const baseUrl = apiClient.defaults.baseURL?.replace(/\/$/, '') || 'http://localhost:8000';
-    let cleanPath = path.replace(/^\//, '');
-    
-    // 如果路径里没有 outputs/，说明后端返回的是纯相对路径，需要补上挂载点
-    if (!cleanPath.startsWith('outputs/')) {
-        cleanPath = `outputs/${cleanPath}`;
-    }
-    
-    const finalUrl = `${baseUrl}/${cleanPath}`;
-    console.log("[PreviewPanel] Resolving URL:", { original: path, final: finalUrl });
-    return finalUrl;
-  };
+  const currentShot = shots.find((s:any, idx:number) => {
+    const acc = shots.slice(0, idx).reduce((sum:number, p:any)=>sum+p.duration, 0);
+    return currentTime >= acc && currentTime < acc + s.duration;
+  }) || shots[0];
 
   const videoUrl = taskStatus?.finalVideoPath 
     ? getFullUrl(taskStatus.finalVideoPath) 
@@ -98,11 +86,6 @@ const PreviewPanel: React.FC = () => {
       }
     }
   };
-
-  const currentShot = shots.find((s:any, idx:number) => {
-    const acc = shots.slice(0, idx).reduce((sum:number, p:any)=>sum+p.duration, 0);
-    return currentTime >= acc && currentTime < acc + s.duration;
-  }) || shots[0];
 
   const formatTime = (time: number) => {
     const mins = Math.floor(time / 60);

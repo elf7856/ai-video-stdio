@@ -127,7 +127,8 @@ class TaskState:
         }
 
 class VideoGenerationOrchestrator:
-    def __init__(self, output_dir="outputs"):
+    def __init__(self, output_dir: Optional[str] = None):
+        self.output_dir = output_dir or settings.output_dir
         self.llm = LLMService(provider=ProviderType.GOOGLE)
         self.video_client = RobustGoogleVideoClient()
         self.image_generator = GoogleImagenGenerator()
@@ -135,7 +136,7 @@ class VideoGenerationOrchestrator:
         self.tts_service = TTSService()
         self.timing_allocator = TimingAllocator()
         self.storage = get_storage_service()
-        self.projects_dir = Path(output_dir) / "projects"
+        self.projects_dir = Path(self.output_dir) / "projects"
         self.projects_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_project_dir(self, task_id: str) -> Path:
@@ -146,9 +147,27 @@ class VideoGenerationOrchestrator:
 
     def _get_local_path(self, path_or_url: Optional[str]) -> Optional[str]:
         if not path_or_url: return None
+        
+        # 移除开头的 /
+        clean_path = path_or_url
+        if clean_path.startswith("/"):
+            clean_path = clean_path[1:]
+            
+        # 如果是 URL
         if "http" in path_or_url and "/outputs/" in path_or_url:
             rel_path = path_or_url.split("/outputs/")[-1]
             return str(Path(settings.output_dir) / rel_path)
+            
+        # 如果是本地路径 (以 outputs/ 开头)
+        if clean_path.startswith("outputs/"):
+            # 确保是相对于当前工作目录的路径
+            # settings.output_dir 通常是 "outputs"
+            if clean_path.startswith(f"{settings.output_dir}/"):
+                return clean_path
+            else:
+                # 这种情况应该比较少见，但以防万一
+                return str(Path(settings.output_dir) / clean_path.replace("outputs/", "", 1))
+                
         return path_or_url
 
     def _save_task_state(self, state: TaskState):
@@ -224,8 +243,36 @@ class VideoGenerationOrchestrator:
                 req = VideoGenerationRequest(prompt=shot.prompt, duration=min(shot.duration, 8.0), image_path=local_img)
                 res = await self.video_client.generate_video(req)
                 if res.success:
-                    shot.video_path = res.local_path
+                    # 将生成的视频归档到项目目录
+                    shot_filename = f"shot_{shot.sequence}_{uuid.uuid4().hex[:6]}.mp4"
+                    project_video_path = self.storage.save(res.local_path, f"projects/{task_id}/videos/{shot_filename}")
+                    
+                    shot.video_path = project_video_path
                     shot.status = "success"
+                    
+                    # 【核心修复】获取并更新视频的真实时长
+                    try:
+                        # storage.save 返回的是 URL/路径，我们需要本地绝对路径来读取信息
+                        # 如果是本地存储，project_video_path 可能是相对路径，也可能是 URL
+                        # 我们直接用 res.local_path (原始文件) 或者重新解析路径
+                        # 这里最稳妥的是用刚才生成的 res.local_path，但在 save 后可能被移除了
+                        # 所以我们最好在 save 之前读取，或者重新定位文件
+                        
+                        # 由于 save 方法对于本地存储只是 copy，原始 res.local_path 还在（直到我们 remove）
+                        # 我们先读取时长
+                        video_info = self.video_processor.get_video_info(res.local_path)
+                        if "duration" in video_info:
+                            real_duration = float(video_info["duration"])
+                            logger.info(f"Shot {shot.sequence} 真实时长: {real_duration}s (预设: {shot.duration}s)")
+                            shot.duration = real_duration
+                    except Exception as e:
+                        logger.warning(f"获取视频真实时长失败: {e}")
+
+                    # 尝试清理原始临时文件
+                    try:
+                        if os.path.exists(res.local_path):
+                            os.remove(res.local_path)
+                    except: pass
                 else: shot.status = "failed"
                 state.progress = 35 + (45 * (i+1) / len(state.shots))
                 self._save_task_state(state)

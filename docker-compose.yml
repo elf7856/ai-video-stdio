@@ -1,7 +1,8 @@
 version: '3.8'
 
 services:
-  video-creator:
+  # 后端API服务
+  backend:
     build: .
     ports:
       - "8000:8000"
@@ -12,34 +13,39 @@ services:
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
-    restart: unless-stopped
+    networks:
+      - video-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
 
-  # 如果需要数据库
-  # postgres:
-  #   image: postgres:15
-  #   environment:
-  #     POSTGRES_DB: video_creator
-  #     POSTGRES_USER: user
-  #     POSTGRES_PASSWORD: password
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #   ports:
-  #     - "5432:5432"
+  # 前端构建和Nginx服务
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    volumes:
+      - frontend-dist:/app/dist
 
-  # 如果需要Redis缓存
-  # redis:
-  #   image: redis:7-alpine
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
+  # Nginx反向代理
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - frontend-dist:/usr/share/nginx/html:ro
+    networks:
+      - video-network
+    depends_on:
+      - backend
+      - frontend
 
 volumes:
-  # postgres_data:
-  # redis_data: 
+  frontend-dist:
+
+networks:
+  video-network:
+    driver: bridge 

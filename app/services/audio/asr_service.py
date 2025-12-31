@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 from abc import ABC, abstractmethod
 import json
 from datetime import datetime
+from ...core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class OpenAIWhisperProvider(ASRProvider):
     """OpenAI Whisper ASR提供商"""
     
     def __init__(self, api_key: str = None):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or settings.openai_api_key
         
     def is_available(self) -> bool:
         """检查OpenAI API是否可用"""
@@ -228,60 +229,153 @@ class LocalWhisperProvider(ASRProvider):
 class GoogleSpeechProvider(ASRProvider):
     """Google Speech-to-Text ASR提供商"""
     
-    def __init__(self, credentials_path: str = None):
-        self.credentials_path = credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    def __init__(self, api_key: Optional[str] = None, credentials_path: Optional[str] = None):
+        from app.core.config import settings
+        # 优先使用传入的api_key，然后使用settings中的配置
+        self.api_key = api_key or settings.google_api_key or ""
+        self.credentials_path = credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or ""
     
     def is_available(self) -> bool:
         """检查Google Speech API是否可用"""
         try:
             from google.cloud import speech
-            return bool(self.credentials_path and os.path.exists(self.credentials_path))
+            # 可以使用API密钥或凭据文件
+            return bool(self.api_key or (self.credentials_path and os.path.exists(self.credentials_path)))
         except ImportError:
             return False
     
     async def transcribe(self, audio_path: str, language: str = "zh-CN") -> ASRResult:
-        """使用Google Speech-to-Text进行转录"""
+        """使用Google Speech-to-Text REST API进行转录"""
         if not self.is_available():
-            raise Exception("Google Speech API未配置或库未安装")
+            raise Exception("Google Speech API未配置")
         
         try:
-            from google.cloud import speech
+            import requests
+            import base64
+            import json
             
-            client = speech.SpeechClient()
-            
-            # 读取音频文件
+            # 读取音频文件并转换为base64
             with open(audio_path, "rb") as audio_file:
-                content = audio_file.read()
+                audio_content = base64.b64encode(audio_file.read()).decode('utf-8')
             
-            # 配置识别请求
-            audio = speech.RecognitionAudio(content=content)
-            config = speech.RecognitionConfig(
-                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                sample_rate_hertz=16000,
-                language_code=language,
-                enable_word_time_offsets=True,
-                enable_automatic_punctuation=True,
-            )
+            # 检查音频文件格式
+            import wave
+            try:
+                with wave.open(audio_path, "rb") as wav_file:
+                    sample_rate = wav_file.getframerate()
+                    channels = wav_file.getnchannels()
+                    sample_width = wav_file.getsampwidth()
+                    
+                    # 确定编码格式
+                    if sample_width == 2:  # 16位
+                        encoding = "LINEAR16"
+                    elif sample_width == 4:  # 32位
+                        encoding = "LINEAR32"
+                    else:
+                        encoding = "LINEAR16"  # 默认
+                        
+                    logger.info(f"音频格式: {sample_rate}Hz, {channels}声道, {sample_width*8}位, 编码:{encoding}")
+                    
+            except Exception as wave_err:
+                logger.warning(f"无法读取波形文件信息: {wave_err}, 使用默认设置")
+                sample_rate = 16000
+                encoding = "LINEAR16"
             
-            # 执行识别
-            response = client.recognize(config=config, audio=audio)
+            # 构建请求数据
+            request_data = {
+                "config": {
+                    "encoding": encoding,
+                    "sampleRateHertz": sample_rate,
+                    "languageCode": language,
+                    "enableAutomaticPunctuation": True,
+                    "enableWordTimeOffsets": True,
+                    "audioChannelCount": 1  # 强制单声道
+                },
+                "audio": {
+                    "content": audio_content
+                }
+            }
+            
+            # 发送请求，增加重试机制
+            url = f"https://speech.googleapis.com/v1/speech:recognize?key={self.api_key}"
+            headers = {
+                "Content-Type": "application/json"
+            }
+            
+            # 重试设置
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(
+                        url, 
+                        headers=headers, 
+                        json=request_data, 
+                        timeout=60,  # 增加超时时间
+                        verify=True  # 明确启用SSL验证
+                    )
+                    response.raise_for_status()
+                    break  # 成功则跳出重试循环
+                    
+                except requests.exceptions.SSLError as ssl_err:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"SSL错误，重试 {attempt + 1}/{max_retries}: {ssl_err}")
+                        import time
+                        time.sleep(2 ** attempt)  # 指数退避
+                        continue
+                    else:
+                        raise Exception(f"SSL连接失败，已重试{max_retries}次: {ssl_err}")
+                        
+                except requests.exceptions.Timeout as timeout_err:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"请求超时，重试 {attempt + 1}/{max_retries}: {timeout_err}")
+                        import time
+                        time.sleep(2 ** attempt)
+                        continue
+                    else:
+                        raise Exception(f"请求超时，已重试{max_retries}次: {timeout_err}")
+                        
+                except requests.exceptions.RequestException as req_err:
+                    # 对于HTTP错误，尝试获取详细的错误信息
+                    if hasattr(req_err, 'response') and req_err.response is not None:
+                        try:
+                            error_detail = req_err.response.json()
+                            logger.error(f"Google API错误详情: {error_detail}")
+                            raise Exception(f"请求失败: {req_err}, 详情: {error_detail}")
+                        except:
+                            raise Exception(f"请求失败: {req_err}")
+                    else:
+                        raise Exception(f"请求失败: {req_err}")
             
             # 解析结果
+            result_data = response.json()
+            
+            if "results" not in result_data or not result_data["results"]:
+                return ASRResult(
+                    text="",
+                    confidence=0.0,
+                    timestamps=[],
+                    language=language,
+                    provider="google_speech"
+                )
+            
+            # 提取文本和置信度
             text = ""
             confidence = 0.0
             timestamps = []
             
-            for result in response.results:
-                alternative = result.alternatives[0]
-                text += alternative.transcript + " "
-                confidence = max(confidence, alternative.confidence)
-                
-                # 提取时间戳信息
-                if hasattr(alternative, 'words'):
-                    for word in alternative.words:
-                        start_time = word.start_time.total_seconds()
-                        end_time = word.end_time.total_seconds()
-                        timestamps.append((start_time, end_time, word.word))
+            for result in result_data["results"]:
+                if "alternatives" in result and result["alternatives"]:
+                    alternative = result["alternatives"][0]
+                    text += alternative.get("transcript", "") + " "
+                    confidence = max(confidence, alternative.get("confidence", 0.0))
+                    
+                    # 提取时间戳信息
+                    if "words" in alternative:
+                        for word in alternative["words"]:
+                            start_time = float(word.get("startTime", "0s").rstrip('s'))
+                            end_time = float(word.get("endTime", "0s").rstrip('s'))
+                            word_text = word.get("word", "")
+                            timestamps.append((start_time, end_time, word_text))
             
             return ASRResult(
                 text=text.strip(),
@@ -313,8 +407,8 @@ class ASRService:
             "google_speech": GoogleSpeechProvider(),
         }
         
-        # 设置优先级顺序
-        self.provider_priority = ["openai_whisper", "local_whisper", "google_speech"]
+        # 设置优先级顺序 - Google优先
+        self.provider_priority = ["google_speech", "local_whisper", "openai_whisper"]
         
         # 预加载可用的提供商
         self.available_providers = self._get_available_providers()
@@ -332,8 +426,16 @@ class ASRService:
     
     async def transcribe_audio(self, audio_path: str, 
                              language: str = "zh-CN",
-                             provider: str = None) -> ASRResult:
-        """转录音频文件"""
+                             provider: str = None,
+                             strict_provider: bool = False) -> ASRResult:
+        """转录音频文件
+        
+        Args:
+            audio_path: 音频文件路径
+            language: 语言代码
+            provider: 指定的ASR提供商
+            strict_provider: 是否严格使用指定的提供商（不回退）
+        """
         
         # 选择提供商
         if provider and provider in self.available_providers:
@@ -355,6 +457,10 @@ class ASRService:
             
         except Exception as e:
             logger.error(f"语音识别失败: {str(e)}")
+            
+            # 如果是严格模式或明确指定了提供商，不进行回退
+            if strict_provider or provider:
+                raise Exception(f"{selected_provider} ASR失败: {str(e)}")
             
             # 尝试其他提供商
             for fallback_provider in self.available_providers:
@@ -380,7 +486,7 @@ class ASRService:
         """从视频文件中提取音频并转录"""
         
         # 提取音频
-        audio_path = await self._extract_audio_from_video(video_path)
+        audio_path = self._extract_audio_from_video(video_path)
         
         try:
             # 转录音频
@@ -392,10 +498,14 @@ class ASRService:
             if os.path.exists(audio_path):
                 os.remove(audio_path)
     
-    async def _extract_audio_from_video(self, video_path: str) -> str:
+    def _extract_audio_from_video(self, video_path: str) -> str:
         """从视频中提取音频"""
         try:
             from moviepy.editor import VideoFileClip
+            import warnings
+            
+            # 抑制moviepy的警告信息
+            warnings.filterwarnings("ignore")
             
             # 创建临时音频文件
             audio_path = tempfile.mktemp(suffix='.wav')
@@ -405,10 +515,15 @@ class ASRService:
             audio = video.audio
             
             if audio is None:
+                video.close()
                 raise Exception("视频中没有音频轨道")
             
-            # 导出音频为WAV格式
-            audio.write_audiofile(audio_path, verbose=False, logger=None)
+            # 导出音频为WAV格式，抑制输出
+            audio.write_audiofile(
+                audio_path, 
+                verbose=False, 
+                logger=None
+            )
             
             # 关闭资源
             audio.close()
@@ -417,6 +532,7 @@ class ASRService:
             return audio_path
             
         except Exception as e:
+            logger.error(f"音频提取失败: {str(e)}")
             raise Exception(f"音频提取失败: {str(e)}")
     
     def get_available_providers(self) -> List[str]:

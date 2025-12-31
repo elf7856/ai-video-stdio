@@ -6,13 +6,16 @@ from app.core.config import settings
 from app.prompts.base import render_prompt
 import tempfile
 import litellm
-from app.services.llm.analyzer import LLMService
+from app.services.llm.service import llm_service
+import logging
+
+logger = logging.getLogger(__name__)
 
 class TTSService:
     def __init__(self):
         self.default_voice = settings.default_tts_voice
         self.default_speed = settings.tts_speed
-        self.llm_service = LLMService()
+        self.llm_service = llm_service
         
         # 预定义的声音配置
         self.voices = {
@@ -40,18 +43,22 @@ class TTSService:
                 {"role": "system", "content": render_prompt("tts_optimizer_role")},
                 {"role": "user", "content": prompt}
             ]
-            
-            content = await self.llm_service.complete(messages, task_type="generation")
+
+            result = self.llm_service.call(messages, max_tokens=1000, temperature=0.7)
+            if result["success"]:
+                content = result["content"]
+            else:
+                raise Exception(result["error"])
             return content.strip()
             
         except Exception as e:
-            print(f"文本优化失败: {str(e)}")
+            logger.error(f"文本优化失败: {str(e)}", exc_info=True)
             return text  # 如果优化失败，返回原文本
     
     async def generate_speech(self, text: str, voice: str = None, 
                             speed: float = None, output_path: str = None,
                             optimize_text: bool = True, style: str = "natural",
-                            emotion: str = "neutral") -> str:
+                            emotion: str = "neutral"):
         """生成语音"""
         try:
             # 可选的文本优化
@@ -66,15 +73,27 @@ class TTSService:
             if output_path is None:
                 output_path = tempfile.mktemp(suffix='.mp3')
             
-            # 使用 Edge TTS 生成语音
-            communicate = edge_tts.Communicate(text, voice_name, rate=f"{speed_value:+.1f}%")
+            # 使用 Edge TTS 生成语音 - 修复速度格式
+            # edge_tts需要整数百分比格式，如 '+0%' 或 '-10%'
+            speed_percent = int((speed_value - 1.0) * 100)
+            rate_str = f"{speed_percent:+d}%" if speed_percent != 0 else "+0%"
+            
+            communicate = edge_tts.Communicate(text, voice_name, rate=rate_str)
             await communicate.save(output_path)
             
-            return output_path
+            return {
+                "success": True,
+                "output_path": output_path,
+                "text": text,
+                "voice": voice_name
+            }
             
         except Exception as e:
-            print(f"TTS生成失败: {str(e)}")
-            return None
+            logger.error(f"TTS生成失败: {str(e)}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e)
+            }
     
     async def generate_speech_batch(self, texts: list, voice: str = None,
                                   speed: float = None, output_dir: str = None) -> list:
@@ -112,47 +131,52 @@ class ElevenLabsTTS:
         self.api_key = api_key or settings.elevenlabs_api_key
         if self.api_key:
             try:
-                from elevenlabs import generate, save, set_api_key
-                set_api_key(self.api_key)
+                from elevenlabs import ElevenLabs
+                self.client = ElevenLabs(api_key=self.api_key)
                 self.available = True
             except ImportError:
                 self.available = False
+                self.client = None
         else:
             self.available = False
+            self.client = None
     
     def generate_speech(self, text: str, voice: str = "Rachel", 
                        output_path: str = None) -> str:
         """使用 ElevenLabs 生成语音"""
-        if not self.available:
+        if not self.available or self.client is None:
             return None
         
         try:
-            from elevenlabs import generate, save
-            
             if output_path is None:
                 output_path = tempfile.mktemp(suffix='.mp3')
             
-            audio = generate(
+            # Generate audio using the new client API
+            audio = self.client.text_to_speech.convert(
                 text=text,
-                voice=voice,
-                model="eleven_multilingual_v2"
+                voice_id=voice,
+                model_id="eleven_multilingual_v2"
             )
             
-            save(audio, output_path)
+            # Save audio to file
+            with open(output_path, 'wb') as f:
+                for chunk in audio:
+                    f.write(chunk)
+            
             return output_path
             
         except Exception as e:
-            print(f"ElevenLabs TTS生成失败: {str(e)}")
+            logger.error(f"ElevenLabs TTS生成失败: {str(e)}", exc_info=True)
             return None
     
     def get_available_voices(self) -> list:
         """获取可用的声音列表"""
-        if not self.available:
+        if not self.available or self.client is None:
             return []
         
         try:
-            from elevenlabs import voices
-            return [voice.name for voice in voices()]
+            voices_response = self.client.voices.get_all()
+            return [voice.name for voice in voices_response.voices]
         except Exception:
             return []
 
@@ -165,7 +189,7 @@ class TTSServiceManager:
     
     async def generate_speech(self, text: str, service: str = "edge", 
                             voice: str = None, speed: float = None,
-                            output_path: str = None) -> str:
+                            output_path: str = None):
         """生成语音（支持多种TTS服务）"""
         
         if service == "edge":

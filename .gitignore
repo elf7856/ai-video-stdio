@@ -163,6 +163,11 @@ Temporary Items
 .env.production
 config/secrets.yaml
 
+# OAuth and YouTube credentials
+client_secret.json
+token.json
+client_secret_*.json
+
 # Large media files
 *.mp4
 *.avi
@@ -178,3 +183,7 @@ temp/
 tmp/
 *.tmp
 *.temp
+
+# test file
+
+/test*
