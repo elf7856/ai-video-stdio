@@ -227,6 +227,75 @@ const HomePage: React.FC = () => {
                     </Box>
                 </Container>
             </Box>
+
+            {/* Footer */}
+            <Box sx={{ 
+                bgcolor: '#050a14', 
+                borderTop: '1px solid rgba(255,255,255,0.05)',
+                pt: 8,
+                pb: 4
+            }}>
+                <Container maxWidth="lg">
+                    <Grid container spacing={4} justifyContent="space-between">
+                        <Grid item xs={12} md={4}>
+                            <Typography variant="h5" fontWeight={700} gutterBottom sx={{ 
+                                background: `linear-gradient(45deg, ${theme.palette.primary.main} 30%, ${theme.palette.secondary.main} 90%)`,
+                                WebkitBackgroundClip: 'text',
+                                WebkitTextFillColor: 'transparent',
+                                mb: 2
+                            }}>
+                                Orenix AI
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 300, lineHeight: 1.8 }}>
+                                Next-generation AI video creation platform. Transform your ideas into cinematic reality with the power of generative AI.
+                            </Typography>
+                        </Grid>
+                        <Grid item xs={12} md={4}>
+                            <Typography variant="subtitle1" fontWeight={700} color="white" gutterBottom>
+                                Contact
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                Email: xikangsong@orenixai.com
+                            </Typography>
+                        </Grid>
+                        <Grid item xs={12} md={4}>
+                            <Typography variant="subtitle1" fontWeight={700} color="white" gutterBottom>
+                                Infrastructure
+                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                <Typography variant="body2" color="text.secondary">
+                                    Building on
+                                </Typography>
+                                <Typography variant="body2" color="#4285F4" fontWeight={600}>
+                                    Google Cloud Vertex AI
+                                </Typography>
+                            </Box>
+                            <Typography variant="caption" color="text.secondary" display="block">
+                                Enterprise-grade security and scalability.
+                            </Typography>
+                        </Grid>
+                    </Grid>
+                    
+                    <Box sx={{ 
+                        mt: 8, 
+                        pt: 4, 
+                        borderTop: '1px solid rgba(255,255,255,0.05)',
+                        display: 'flex',
+                        flexDirection: { xs: 'column', md: 'row' },
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 2
+                    }}>
+                        <Typography variant="caption" color="text.secondary">
+                            © 2026 Orenix AI. All rights reserved.
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 3 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ cursor: 'pointer', '&:hover': { color: 'white' } }}>Privacy Policy</Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ cursor: 'pointer', '&:hover': { color: 'white' } }}>Terms of Service</Typography>
+                        </Box>
+                    </Box>
+                </Container>
+            </Box>
         </Box>
     );
 };

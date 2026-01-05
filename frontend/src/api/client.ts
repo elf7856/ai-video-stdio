@@ -6,7 +6,7 @@ import axios from 'axios';
 
 // 创建axios实例
 const apiClient = axios.create({
-  baseURL: 'http://localhost:8000', // 后端地址
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000', // 优先使用环境变量
   timeout: 120000, // 2分钟超时（AI生成需要较长时间）
   headers: {
     'Content-Type': 'application/json',
