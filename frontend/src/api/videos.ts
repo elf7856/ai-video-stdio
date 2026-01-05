@@ -28,13 +28,15 @@ export const videosApi = {
   confirmAndGenerate: async (
     taskId: string,
     script: string,
-    shots: Shot[]
+    shots: Shot[],
+    options?: any
   ): Promise<VideoGenerationTask> => {
     const response = await apiClient.post<VideoGenerationTask>(
       `/api/video-generation/task/${taskId}/confirm`,
       {
         script,
-        shots
+        shots,
+        options
       }
     );
     return response.data;

@@ -20,14 +20,14 @@ const HomePage: React.FC = () => {
             y: 0,
             transition: {
                 staggerChildren: 0.3,
-                delayChildren: 0.2,
+                delayChildren: 1.5, // Increased delay
             },
         },
     };
 
     const itemVariants = {
         hidden: { opacity: 0, y: 20 },
-        visible: { opacity: 1, y: 0, transition: { duration: 0.5 } },
+        visible: { opacity: 1, y: 0, transition: { duration: 0.8 } },
     };
     
     const cardHoverEffect = {
@@ -54,7 +54,9 @@ const HomePage: React.FC = () => {
                     textAlign: 'center',
                     color: 'common.white',
                     overflow: 'hidden',
+                    cursor: 'pointer' // Make cursor indicate clickability
                 }}
+                onClick={() => document.getElementById('start-btn')?.click()} // Clicking background triggers button
             >
                 <video
                     autoPlay
@@ -100,6 +102,7 @@ const HomePage: React.FC = () => {
                     </motion.div>
                     <motion.div variants={itemVariants}>
                         <Button
+                            id="start-btn"
                             component={RouterLink}
                             to="/generate"
                             variant="contained"
@@ -107,13 +110,26 @@ const HomePage: React.FC = () => {
                             endIcon={<PlayArrowIcon />}
                             sx={{
                                 borderRadius: '50px',
-                                padding: '16px 48px',
+                                padding: '16px 56px',
                                 fontSize: '1.25rem',
                                 fontWeight: 700,
-                                boxShadow: `0 20px 40px -10px ${alpha(theme.palette.primary.main, 0.5)}`
+                                background: `linear-gradient(45deg, ${theme.palette.primary.main} 30%, ${theme.palette.secondary.main} 90%)`,
+                                boxShadow: '0 8px 32px rgba(255, 64, 129, 0.3)',
+                                transition: 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                                textTransform: 'none',
+                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                '&:hover': {
+                                    transform: 'scale(1.05) translateY(-2px)',
+                                    boxShadow: '0 12px 48px rgba(255, 64, 129, 0.5)',
+                                    background: `linear-gradient(45deg, ${theme.palette.primary.dark} 30%, ${theme.palette.secondary.dark} 90%)`,
+                                },
+                                '&:active': {
+                                    transform: 'scale(0.98)',
+                                    boxShadow: '0 4px 16px rgba(255, 64, 129, 0.3)',
+                                }
                             }}
                         >
-                            Start Creating
+                            Create
                         </Button>
                     </motion.div>
                 </Container>

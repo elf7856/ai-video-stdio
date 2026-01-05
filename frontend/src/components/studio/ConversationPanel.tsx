@@ -5,17 +5,16 @@
 import React, { useRef, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Box, Typography, Paper, Stack, Chip, CircularProgress, Divider, Button, alpha
+  Box, Typography, Paper, Stack, CircularProgress, Divider, Button, alpha
 } from '@mui/material';
-import { AutoAwesome as MagicIcon, Timer as TimerIcon } from '@mui/icons-material';
+import { AutoAwesome as MagicIcon } from '@mui/icons-material';
 import { useWorkflowStore } from '../../stores/workflowStore';
-import apiClient from '../../api/client';
 import { getFullUrl } from '../../utils/url';
 
 const ConversationPanel: React.FC = () => {
   const navigate = useNavigate();
   const { projectId } = useParams<{ projectId: string }>();
-  const { conversation, creative, stage, shots, taskStatus, syncTask, initiateTask, confirmAndGenerate } = useWorkflowStore();
+  const { conversation, stage, shots, taskStatus, syncTask, initiateTask, confirmAndGenerate } = useWorkflowStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

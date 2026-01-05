@@ -50,7 +50,7 @@ const AssetPanel: React.FC = () => {
   const { shots } = useWorkflowStore();
 
   // 从shots生成资源列表
-  const generatedAssets = shots.map((shot) => ({
+  const generatedAssets = shots.map((shot: any) => ({
     id: `shot-${shot.sequence}`,
     name: `镜头 ${shot.sequence}`,
     type: 'video',
@@ -202,7 +202,7 @@ const AssetPanel: React.FC = () => {
               gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
               gap: 1
             }}>
-              {generatedAssets.map((asset, idx) => renderAssetCard(asset, idx))}
+              {generatedAssets.map((asset: any, idx: number) => renderAssetCard(asset, idx))}
             </Box>
           ) : (
             <Box sx={{ textAlign: 'center', py: 3 }}>

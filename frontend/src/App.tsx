@@ -9,6 +9,7 @@ import HomePage from './pages/Home';
 import TemplatesPage from './pages/Templates';
 import ContentPage from './pages/Content';
 import Studio from './pages/Studio';
+import GeneratePage from './pages/Generate';
 
 const App: React.FC = () => {
     const [isSidebarOpen, setSidebarOpen] = useState(true);
@@ -37,7 +38,7 @@ const App: React.FC = () => {
                 <Navbar onMenuClick={toggleSidebar} minimal />
                 <Box sx={{ flex: 1, overflow: 'hidden' }}>
                     <Routes>
-                        <Route path="/generate" element={<Studio />} />
+                        <Route path="/generate" element={<GeneratePage />} />
                         <Route path="/editor" element={<Studio />} />
                         <Route path="/editor/:projectId" element={<Studio />} />
                         <Route path="/studio" element={<Studio />} />

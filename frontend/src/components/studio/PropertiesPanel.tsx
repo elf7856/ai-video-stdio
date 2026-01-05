@@ -167,9 +167,9 @@ const PropertiesPanel: React.FC = () => {
               <Typography variant="subtitle2" fontWeight={700} color="#fff" mb={1}>
                 镜头列表
               </Typography>
-              {shots.map((shot, idx) => (
+              {shots.map((shot: any, idx: number) => (
                 <Paper
-                  key={shot.sequence}
+                  key={shot.sequence || idx}
                   onClick={() => setSelectedShotIndex(idx)}
                   sx={{
                     p: 1.5,

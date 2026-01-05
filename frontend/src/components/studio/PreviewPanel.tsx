@@ -4,7 +4,6 @@ import {
 } from '@mui/material';
 import { PlayArrow as PlayIcon, Pause as PauseIcon, Crop169 as Landscape, CropPortrait as Portrait, CropSquare as Square } from '@mui/icons-material';
 import { useWorkflowStore } from '../../stores/workflowStore';
-import apiClient from '../../api/client';
 import { getFullUrl } from '../../utils/url';
 
 const PreviewPanel: React.FC = () => {
@@ -13,7 +12,7 @@ const PreviewPanel: React.FC = () => {
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [duration] = useState(0); // setDuration removed
 
   const estimatedDuration = shots.reduce((a:number, b:any)=>a+b.duration, 0) || 60;
   const displayDuration = duration || estimatedDuration;

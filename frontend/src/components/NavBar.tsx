@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppBar, Toolbar, Typography, IconButton, Box } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import MenuIcon from '@mui/icons-material/Menu';
 import HomeIcon from '@mui/icons-material/Home';
 
@@ -11,6 +11,8 @@ interface NavbarProps {
 
 const Navbar: React.FC<NavbarProps> = ({ onMenuClick, minimal = false }) => {
     const navigate = useNavigate();
+    const location = useLocation();
+    const isGeneratePage = location.pathname === '/generate';
 
     return (
         <AppBar
@@ -56,7 +58,7 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick, minimal = false }) => {
                 >
                     Orenix AI
                 </Typography>
-                {minimal && (
+                {minimal && !isGeneratePage && (
                     <Box sx={{
                         ml: 2,
                         px: 1.5,

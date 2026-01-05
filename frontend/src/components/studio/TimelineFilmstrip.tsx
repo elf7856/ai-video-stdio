@@ -8,7 +8,7 @@ interface TimelineFilmstripProps {
     pxPerSec: number; // 每秒对应的像素数，用于计算密度
 }
 
-const TimelineFilmstrip: React.FC<TimelineFilmstripProps> = ({ videoUrl, duration, height, pxPerSec }) => {
+const TimelineFilmstrip: React.FC<TimelineFilmstripProps> = ({ videoUrl, duration, pxPerSec }) => {
     const [thumbnails, setThumbnails] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -41,7 +41,42 @@ const TimelineFilmstrip: React.FC<TimelineFilmstripProps> = ({ videoUrl, duratio
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
                 if (!ctx) throw new Error("Canvas context failed");
-// ... existing code ...
+
+                // 设定缩略图尺寸 (降低高度以提升性能)
+                const thumbHeight = 60; 
+                const thumbWidth = (video.videoWidth / video.videoHeight) * thumbHeight;
+                canvas.width = thumbWidth;
+                canvas.height = thumbHeight;
+
+                const frames = [];
+                // 策略：每隔一定像素生成一张图。
+                const totalWidth = duration * pxPerSec;
+                // 限制最大数量，防止浏览器崩溃 (例如最多 20 张)
+                const count = Math.min(Math.ceil(totalWidth / 80), 20); 
+                const interval = duration / count;
+
+                for (let i = 0; i < count; i++) {
+                    const time = i * interval;
+                    
+                    // Seek
+                    video.currentTime = time;
+                    await new Promise(r => {
+                        video.onseeked = r;
+                        // 增加超时防止卡死
+                        setTimeout(r, 500); 
+                    });
+
+                    // Draw
+                    ctx.drawImage(video, 0, 0, thumbWidth, thumbHeight);
+                    frames.push(canvas.toDataURL('image/jpeg', 0.7)); // 压缩质量 0.7
+                }
+
+                setThumbnails(frames);
+                setLoading(false);
+                
+                // 清理
+                video.removeAttribute('src');
+                video.load();
             } catch (err: any) {
                 console.error("Thumbnail generation failed:", err);
                 setError(err.message || "Failed to load");

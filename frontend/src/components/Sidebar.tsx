@@ -3,9 +3,7 @@ import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Toolti
 import { motion, AnimatePresence } from 'framer-motion';
 import HomeIcon from '@mui/icons-material/Home';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
-import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import FolderIcon from '@mui/icons-material/Folder';
-import EditIcon from '@mui/icons-material/Edit';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
 
 interface SidebarProps {
@@ -15,8 +13,8 @@ interface SidebarProps {
 const navItems = [
     { text: 'Home', icon: <HomeIcon />, path: '/' },
     { text: 'Templates', icon: <VideoLibraryIcon />, path: '/templates' },
-    { text: 'Generate', icon: <AddCircleOutlineIcon />, path: '/generate' },
-    { text: 'Editor', icon: <EditIcon />, path: '/editor' },
+    // { text: 'Generate', icon: <AddCircleOutlineIcon />, path: '/generate' },
+    // { text: 'Editor', icon: <EditIcon />, path: '/editor' },
     { text: 'My Content', icon: <FolderIcon />, path: '/content' },
 ];
 

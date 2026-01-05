@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
     Box,
     Typography,
@@ -105,6 +105,11 @@ const GeneratePage: React.FC = () => {
     const [narrationVoice, setNarrationVoice] = useState('chinese_female');
     const [narrationSpeed, setNarrationSpeed] = useState(1.0);
     const [pacingStrategy, setPacingStrategy] = useState('balanced');
+
+    // Reset state on mount to ensure we see the search view
+    useEffect(() => {
+        setHasStarted(false);
+    }, []);
 
     // --- Logic ---
 

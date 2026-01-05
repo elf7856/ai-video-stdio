@@ -36,8 +36,6 @@ import {
     Pause as PauseIcon,
     SkipNext as NextIcon,
     SkipPrevious as PrevIcon,
-    ArrowUpward as UpIcon,
-    ArrowDownward as DownIcon,
     MovieFilter as TransitionIcon,
     MusicNote as MusicIcon,
     Merge as MergeIcon,
@@ -109,37 +107,85 @@ const EditorPage: React.FC = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const videoRef = useRef<HTMLVideoElement>(null);
+    const timelineRef = useRef<HTMLDivElement>(null);
 
     // 从路由state接收数据
     const taskData = location.state as EditorData | null;
 
+    // Core State
     const [orderedShots, setOrderedShots] = useState<ShotWithVideo[]>([]);
     const [loading, setLoading] = useState(true);
     const [merging, setMerging] = useState(false);
     const [mergeProgress, setMergeProgress] = useState(0);
 
-    // 预览状态
+    // Playback & Time State
     const [currentShotIndex, setCurrentShotIndex] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
-    
-    // 【核心升级】全局时间轴引擎
-    const [globalTime, setGlobalTime] = useState(0); // 全局播放时间（秒）
+    const [globalTime, setGlobalTime] = useState(0); // 全局播放时间
     const [totalDuration, setTotalDuration] = useState(0); // 真实总时长
+    // const [currentTime, setCurrentTime] = useState(0); // REMOVED: Unused
+    // const [duration, setDuration] = useState(0); // REMOVED: Unused
+    const [volume, setVolume] = useState(1);
+    const [isMuted, setIsMuted] = useState(false);
     
-    // ... existing states ...
+    // Timeline UI State
+    const [pxPerSec, setPxPerSec] = useState(40); // Zoom level
 
-    // Initialize shots and sync real duration
+    // Transition dialog
+    const [transitionDialogOpen, setTransitionDialogOpen] = useState(false);
+    const [selectedTransitionIndex] = useState<number | null>(null);
+    const [transitionType, setTransitionType] = useState('fade');
+    const [transitionDuration, setTransitionDuration] = useState(1.0);
+    const [, setShotTransitions] = useState<Record<number, { type: string; duration: number }>>({});
+
+    // Filter settings
+    const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+    const [filterSettings, setFilterSettings] = useState<Record<string, number>>({
+        brightness: 1,
+        contrast: 1,
+        saturate: 1,
+        blur: 0,
+    });
+    const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+    const [previewFilter, setPreviewFilter] = useState(true);
+
+    // Music settings
+    const [musicDialogOpen, setMusicDialogOpen] = useState(false);
+    const [musicVolume, setMusicVolume] = useState(0.3);
+    const [musicFadeIn, setMusicFadeIn] = useState(2);
+    const [musicFadeOut, setMusicFadeOut] = useState(2);
+    const [musicEnabled, setMusicEnabled] = useState(false);
+
+    // Snackbar
+    const [snackbar, setSnackbar] = useState<{
+        open: boolean;
+        message: string;
+        severity: 'success' | 'error' | 'info' | 'warning';
+    }>({ open: false, message: '', severity: 'info' });
+
+    // Applied settings tracking
+    const [appliedFilter, setAppliedFilter] = useState<string | null>(null);
+    const [appliedTransitions, setAppliedTransitions] = useState<number>(0);
+    const [appliedMusic, setAppliedMusic] = useState(false);
+
+    // Shot editing state
+    const [editingShotIndex, setEditingShotIndex] = useState<number | null>(null);
+    const [editingDuration, setEditingDuration] = useState<number>(5);
+    const [editingPrompt, setEditingPrompt] = useState<string>('');
+
+    // Generate a storage key based on task ID
+    const getStorageKey = (taskId: string) => `editor_state_${taskId}`;
+
+    // Initialize shots and restore saved state
     useEffect(() => {
         if (taskData?.shots) {
             setLoading(true);
             
-            // 1. 初步合并数据
             const initialShots = taskData.shots.map(shot => ({
                 ...shot,
                 videoData: taskData.generatedVideos?.find(v => v.sequence === shot.sequence),
             }));
 
-            // 2. 【关键】异步获取所有视频的真实时长
             const syncDurations = async () => {
                 const syncedShots = await Promise.all(initialShots.map(async (shot) => {
                     if (!shot.videoData?.videoPath) return shot;
@@ -165,22 +211,16 @@ const EditorPage: React.FC = () => {
                             resolve(shot);
                         };
 
-                        // 增加超时时间到 15秒，给大文件更多机会
-                        setTimeout(() => {
-                            // console.warn(`[DurationSync] Timeout for shot ${shot.sequence}`);
-                            resolve(shot);
-                        }, 15000);
+                        setTimeout(() => resolve(shot), 15000);
                     });
                 }));
 
-                // 恢复之前的编辑状态（如果有）
                 const savedState = taskData.taskId ? localStorage.getItem(getStorageKey(taskData.taskId)) : null;
                 let finalShots = syncedShots;
 
                 if (savedState) {
                     try {
                         const parsed = JSON.parse(savedState);
-                        // ... restore other settings ...
                         if (parsed.filterSettings) setFilterSettings(parsed.filterSettings);
                         if (parsed.selectedPreset) setSelectedPreset(parsed.selectedPreset);
                         if (parsed.appliedFilter) setAppliedFilter(parsed.appliedFilter);
@@ -192,7 +232,6 @@ const EditorPage: React.FC = () => {
                         if (parsed.musicFadeOut !== undefined) setMusicFadeOut(parsed.musicFadeOut);
                         if (parsed.appliedMusic !== undefined) setAppliedMusic(parsed.appliedMusic);
 
-                        // 恢复顺序，但使用 sync 过的时长
                         if (parsed.shotOrder && parsed.shotOrder.length > 0) {
                             finalShots = parsed.shotOrder
                                 .map((seq: number) => syncedShots.find(s => s.sequence === seq))
@@ -204,7 +243,6 @@ const EditorPage: React.FC = () => {
                 }
 
                 setOrderedShots(finalShots);
-                // 计算真实的总时长
                 const realTotal = finalShots.reduce((sum, s) => sum + s.duration, 0);
                 setTotalDuration(realTotal);
                 setLoading(false);
@@ -212,40 +250,19 @@ const EditorPage: React.FC = () => {
 
             syncDurations();
         } else {
-            setTimeout(() => navigate('/content'), 2000);
+            setTimeout(() => {
+                navigate('/content');
+            }, 2000);
         }
     }, [taskData, navigate]);
 
-    // Recalculate total duration whenever shots change (e.g. trimming)
+    // Recalculate total duration
     useEffect(() => {
         const total = orderedShots.reduce((sum, s) => sum + s.duration, 0);
         setTotalDuration(total);
     }, [orderedShots]);
 
-    // Save state to localStorage whenever it changes (debounced)
-    useEffect(() => {
-        if (taskData?.taskId && !loading && orderedShots.length > 0) {
-            const stateToSave = {
-                filterSettings,
-                selectedPreset,
-                appliedFilter,
-                shotTransitions,
-                appliedTransitions,
-                musicEnabled,
-                musicVolume,
-                musicFadeIn,
-                musicFadeOut,
-                appliedMusic,
-                shotOrder: orderedShots.map(s => s.sequence),
-                savedAt: new Date().toISOString()
-            };
-            localStorage.setItem(getStorageKey(taskData.taskId), JSON.stringify(stateToSave));
-        }
-    }, [taskData?.taskId, filterSettings, selectedPreset, appliedFilter, shotTransitions,
-        appliedTransitions, musicEnabled, musicVolume, musicFadeIn, musicFadeOut,
-        appliedMusic, orderedShots, loading]);
-
-    // 监听 currentShotIndex 变化，如果在播放状态，则继续播放
+    // Auto-play when switching shots
     useEffect(() => {
         if (isPlaying && videoRef.current) {
             videoRef.current.play().catch(() => {});
@@ -279,8 +296,6 @@ const EditorPage: React.FC = () => {
                 if (currentShotIndex < orderedShots.length - 1) {
                     // 自动无缝切换到下一个 Shot
                     setCurrentShotIndex(prev => prev + 1);
-                    // 时间重置为 0 (虽然后续 src 改变会自动重置，显式设置更稳妥)
-                    // videoRef.current.currentTime = 0; 
                 } else {
                     // 整个时间轴播放结束
                     setIsPlaying(false);
@@ -290,13 +305,10 @@ const EditorPage: React.FC = () => {
     };
 
     const handleLoadedMetadata = () => {
-        // 单个视频加载完元数据，不需要更新全局 duration (已经在初始化时 sync 了)
-        // 但如果是在播放中切换过来，可能需要 seek 到正确位置（如果是 Seek 触发的切换）
-        // 这里简化处理：如果在播放中，自然会从 0 开始播
+        // Removed unnecessary duration update
     };
 
     const handleVideoEnded = () => {
-        // 主要逻辑移到了 timeUpdate 中处理，这里作为兜底
         if (currentShotIndex < orderedShots.length - 1) {
             setCurrentShotIndex(currentShotIndex + 1);
         } else {
@@ -315,19 +327,11 @@ const EditorPage: React.FC = () => {
             if (seekTime >= acc && seekTime <= acc + shot.duration + 0.01) {
                 if (currentShotIndex !== i) {
                     setCurrentShotIndex(i);
-                    // 注意：切换 index 后，video src 会变，需要等待 loadedmetadata 才能 seek
-                    // 这里我们设置一个标记或者利用 state 闭包，简单起见我们直接设置
-                    // 实际应用中可能需要更复杂的流式加载处理
                 }
                 
                 if (videoRef.current) {
-                     // 如果是同一个视频，直接跳
                      if (currentShotIndex === i) {
                          videoRef.current.currentTime = seekTime - acc;
-                     } else {
-                         // 如果切换了视频，我们需要在下一次渲染（src更新后）再seek
-                         // 这里通过副作用或者 autoPlay 暂时简化
-                         // 改进：我们可以用一个 ref 存 pendingSeekTime
                      }
                 }
                 return;
@@ -364,9 +368,11 @@ const EditorPage: React.FC = () => {
         }
     };
 
+    /*
     const handleShotSelect = (index: number) => {
         setCurrentShotIndex(index);
     };
+    */
 
     // 生成CSS滤镜字符串
     const getFilterStyle = () => {
@@ -388,6 +394,16 @@ const EditorPage: React.FC = () => {
         return filters;
     };
 
+    const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!timelineRef.current) return;
+        const rect = timelineRef.current.getBoundingClientRect();
+        const offsetX = e.clientX - rect.left + timelineRef.current.scrollLeft;
+        const clickTime = Math.max(0, (offsetX - 16) / pxPerSec); // 16px is left padding
+        
+        handleSeek({} as any, clickTime);
+    };
+
+    /*
     const handleMoveUp = (index: number) => {
         if (index === 0) return;
         const newOrder = [...orderedShots];
@@ -414,6 +430,7 @@ const EditorPage: React.FC = () => {
         }
         setTransitionDialogOpen(true);
     };
+    */
 
     // Shot editing functions
     const handleEditShot = (index: number) => {
@@ -481,7 +498,6 @@ const EditorPage: React.FC = () => {
     const handleResetEdits = () => {
         if (taskData?.taskId) {
             localStorage.removeItem(getStorageKey(taskData.taskId));
-            // Reset all state
             setFilterSettings({ brightness: 1, contrast: 1, saturate: 1, blur: 0 });
             setSelectedPreset(null);
             setAppliedFilter(null);
@@ -492,7 +508,7 @@ const EditorPage: React.FC = () => {
             setMusicFadeIn(2);
             setMusicFadeOut(2);
             setAppliedMusic(false);
-            // Reset shot order
+            
             const merged = taskData.shots.map(shot => ({
                 ...shot,
                 videoData: taskData.generatedVideos?.find(v => v.sequence === shot.sequence),
@@ -546,7 +562,6 @@ const EditorPage: React.FC = () => {
     };
 
     const handleFinalMerge = async () => {
-        // Check if we have videos to merge
         const videosReady = orderedShots.filter(s => s.videoData?.status === 'success').length;
         if (videosReady === 0) {
             setSnackbar({
@@ -561,7 +576,6 @@ const EditorPage: React.FC = () => {
         setMergeProgress(0);
 
         try {
-            // Create editor project with timeline data
             const timeline = {
                 id: `timeline_${Date.now()}`,
                 name: taskData?.topic || 'Merged Video',
@@ -580,7 +594,6 @@ const EditorPage: React.FC = () => {
                 }]
             };
 
-            // Show progress
             setMergeProgress(20);
 
             const project = await editorApi.createProject({
@@ -591,13 +604,11 @@ const EditorPage: React.FC = () => {
 
             setMergeProgress(40);
 
-            // Start render
             await editorApi.renderVideo({
                 project_id: project.id,
                 quality: 'high'
             });
 
-            // Poll for completion
             const pollRender = async () => {
                 const updated = await editorApi.getProject(project.id);
                 setMergeProgress(40 + (updated.render_progress * 0.6));
@@ -659,8 +670,7 @@ const EditorPage: React.FC = () => {
     }
 
     const currentShot = orderedShots[currentShotIndex];
-    const totalDuration = orderedShots.reduce((sum, shot) => sum + shot.duration, 0);
-    const completedCount = orderedShots.filter(s => s.videoData?.status === 'success').length;
+    // const completedCount = orderedShots.filter(s => s.videoData?.status === 'success').length; // REMOVED: Unused
 
     return (
         <Box sx={{
@@ -689,7 +699,7 @@ const EditorPage: React.FC = () => {
                             视频后期编辑
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
-                            {taskData?.topic || '项目'} • {orderedShots.length} 个镜头 • {totalDuration}秒
+                            {taskData?.topic || '项目'} • {orderedShots.length} 个镜头 • {formatTime(totalDuration)}
                         </Typography>
                         {/* Applied effects summary */}
                         <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
@@ -948,7 +958,7 @@ const EditorPage: React.FC = () => {
                         </Paper>
                     </Box>
 
-                    {/* 下部：镜头时间轴 */}
+                    {/* 下部：镜头时间轴 - 改为专业Timeline样式 */}
                     <Paper sx={{
                         height: 240,
                         flexShrink: 0,
@@ -960,230 +970,170 @@ const EditorPage: React.FC = () => {
                         flexDirection: 'column',
                         overflow: 'hidden'
                     }}>
-    // Timeline State
-    const [pxPerSec, setPxPerSec] = useState(40); // 默认缩放：1秒=40px
-    const timelineRef = useRef<HTMLDivElement>(null);
-
-    // ... existing code ...
-
-    // 生成CSS滤镜字符串
-    const getFilterStyle = () => {
-        // ... existing code ...
-    };
-
-    // 计算点击时间轴的位置
-    const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!timelineRef.current) return;
-        const rect = timelineRef.current.getBoundingClientRect();
-        const offsetX = e.clientX - rect.left + timelineRef.current.scrollLeft;
-        const clickTime = Math.max(0, offsetX / pxPerSec);
-        
-        // 找到对应的 shot 并跳转
-        if (videoRef.current) {
-            // 这里我们需要计算全局时间对应的 shot
-            let accumulated = 0;
-            for (let i = 0; i < orderedShots.length; i++) {
-                const shot = orderedShots[i];
-                if (clickTime >= accumulated && clickTime < accumulated + shot.duration) {
-                    setCurrentShotIndex(i);
-                    // 视频播放器目前是播放单个片段，所以我们要把全局时间转换为片段内时间
-                    const localTime = clickTime - accumulated;
-                    videoRef.current.currentTime = localTime;
-                    setCurrentTime(localTime);
-                    break;
-                }
-                accumulated += shot.duration;
-            }
-        }
-    };
-
-    // ... existing code ...
-
-                            {/* 下部：镜头时间轴 - 改为专业Timeline样式 */}
-                            <Box sx={{ p: 1.5, borderBottom: `1px solid ${alpha(theme.palette.common.white, 0.1)}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: '#1e1e1e' }}>
-                                <Stack direction="row" spacing={2} alignItems="center">
-                                    <Typography variant="subtitle1" fontWeight={700}>时间轴</Typography>
-                                    <Stack direction="row" spacing={1} alignItems="center">
-                                        <IconButton size="small" onClick={() => setPxPerSec(Math.max(10, pxPerSec - 10))}><Typography>-</Typography></IconButton>
-                                        <Slider 
-                                            value={pxPerSec} 
-                                            min={10} max={200} 
-                                            onChange={(_, v) => setPxPerSec(v as number)} 
-                                            sx={{ width: 100 }} 
-                                            size="small"
-                                        />
-                                        <IconButton size="small" onClick={() => setPxPerSec(Math.min(200, pxPerSec + 10))}><Typography>+</Typography></IconButton>
-                                    </Stack>
+                        <Box sx={{ p: 1.5, borderBottom: `1px solid ${alpha(theme.palette.common.white, 0.1)}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: '#1e1e1e' }}>
+                            <Stack direction="row" spacing={2} alignItems="center">
+                                <Typography variant="subtitle1" fontWeight={700}>时间轴</Typography>
+                                <Stack direction="row" spacing={1} alignItems="center">
+                                    <IconButton size="small" onClick={() => setPxPerSec(Math.max(10, pxPerSec - 10))}><Typography>-</Typography></IconButton>
+                                    <Slider 
+                                        value={pxPerSec} 
+                                        min={10} max={200} 
+                                        onChange={(_, v) => setPxPerSec(v as number)} 
+                                        sx={{ width: 100 }} 
+                                        size="small"
+                                    />
+                                    <IconButton size="small" onClick={() => setPxPerSec(Math.min(200, pxPerSec + 10))}><Typography>+</Typography></IconButton>
                                 </Stack>
-                                <Typography variant="caption" color="text.secondary">
-                                    总时长: {formatTime(totalDuration)}
-                                </Typography>
+                            </Stack>
+                            <Typography variant="caption" color="text.secondary">
+                                总时长: {formatTime(totalDuration)}
+                            </Typography>
+                        </Box>
+
+                        <Box 
+                            ref={timelineRef}
+                            sx={{ 
+                                flex: 1, 
+                                overflowX: 'auto', 
+                                overflowY: 'hidden',
+                                position: 'relative',
+                                bgcolor: '#121212',
+                                cursor: 'text',
+                                '&::-webkit-scrollbar': { height: 10 },
+                                '&::-webkit-scrollbar-thumb': { bgcolor: '#444', borderRadius: 5 }
+                            }}
+                            onClick={handleTimelineClick}
+                        >
+                            {/* 刻度尺 (Ruler) */}
+                            <Box sx={{ height: 24, borderBottom: '1px solid #333', position: 'sticky', top: 0, bgcolor: '#121212', zIndex: 10, display: 'flex' }}>
+                                {Array.from({ length: Math.ceil(totalDuration) + 5 }).map((_, sec) => (
+                                    <Box key={sec} sx={{ 
+                                        width: pxPerSec, 
+                                        height: '100%', 
+                                        borderLeft: '1px solid #333', 
+                                        position: 'relative',
+                                        flexShrink: 0
+                                    }}>
+                                        <Typography variant="caption" color="#666" sx={{ position: 'absolute', left: 2, top: 0, fontSize: '0.6rem' }}>
+                                            {formatTime(sec)}
+                                        </Typography>
+                                    </Box>
+                                ))}
                             </Box>
 
-                            <Box 
-                                ref={timelineRef}
-                                sx={{ 
-                                    flex: 1, 
-                                    overflowX: 'auto', 
-                                    overflowY: 'hidden',
-                                    position: 'relative',
-                                    bgcolor: '#121212',
-                                    cursor: 'text', // 指示可以点击设定光标
-                                    '&::-webkit-scrollbar': { height: 10 },
-                                    '&::-webkit-scrollbar-thumb': { bgcolor: '#444', borderRadius: 5 }
-                                }}
-                                onClick={handleTimelineClick}
-                            >
-                                {/* 刻度尺 (Ruler) */}
-                                <Box sx={{ height: 24, borderBottom: '1px solid #333', position: 'sticky', top: 0, bgcolor: '#121212', zIndex: 10, display: 'flex' }}>
-                                    {Array.from({ length: Math.ceil(totalDuration) + 5 }).map((_, sec) => (
-                                        <Box key={sec} sx={{ 
-                                            width: pxPerSec, 
-                                            height: '100%', 
-                                            borderLeft: '1px solid #333', 
-                                            position: 'relative',
-                                            flexShrink: 0
-                                        }}>
-                                            <Typography variant="caption" color="#666" sx={{ position: 'absolute', left: 2, top: 0, fontSize: '0.6rem' }}>
-                                                {formatTime(sec)}
-                                            </Typography>
-                                        </Box>
-                                    ))}
+                            {/* 轨道区域 */}
+                            <Box sx={{ p: 2, minWidth: totalDuration * pxPerSec + 200, display: 'flex', position: 'relative' }}>
+                                
+                                {/* 全局播放指针 (Global Playhead) */}
+                                <Box sx={{
+                                    position: 'absolute',
+                                    left: 16 + (globalTime * pxPerSec),
+                                    top: 0, 
+                                    bottom: 0,
+                                    width: 2,
+                                    bgcolor: '#FF4081',
+                                    zIndex: 20,
+                                    pointerEvents: 'none',
+                                    transition: 'left 0.1s linear',
+                                    boxShadow: '0 0 8px rgba(255, 64, 129, 0.8)'
+                                }}>
+                                    <Box sx={{
+                                        position: 'absolute', top: -4, left: -6,
+                                        width: 14, height: 14,
+                                        bgcolor: '#FF4081', 
+                                        transform: 'rotate(45deg)',
+                                        borderRadius: '2px 2px 2px 8px'
+                                    }}/>
                                 </Box>
 
-                                {/* 轨道区域 */}
-                                <Box sx={{ p: 2, minWidth: totalDuration * pxPerSec + 200, display: 'flex', position: 'relative' }}>
+                                {orderedShots.map((shot, index) => {
+                                    const shotWidth = shot.duration * pxPerSec;
+                                    const isSelected = currentShotIndex === index;
                                     
-                                    {/* 全局播放指针 (Global Playhead) */}
-                                    <Box sx={{
-                                        position: 'absolute',
-                                        left: 16 + (globalTime * pxPerSec), // 16px is left padding
-                                        top: 0, 
-                                        bottom: 0,
-                                        width: 2,
-                                        bgcolor: '#FF4081',
-                                        zIndex: 20,
-                                        pointerEvents: 'none',
-                                        transition: 'left 0.1s linear', // 平滑移动
-                                        boxShadow: '0 0 8px rgba(255, 64, 129, 0.8)'
-                                    }}>
-                                        <Box sx={{
-                                            position: 'absolute', top: -4, left: -6,
-                                            width: 14, height: 14,
-                                            bgcolor: '#FF4081', 
-                                            transform: 'rotate(45deg)',
-                                            borderRadius: '2px 2px 2px 8px'
-                                        }}/>
-                                    </Box>
-
-                                    {orderedShots.map((shot, index) => {
-                                        const shotWidth = shot.duration * pxPerSec;
-                                        const isSelected = currentShotIndex === index;
-                                        
-                                        return (
-                                        <motion.div
-                                            key={`${shot.sequence}-${index}`}
-                                            initial={{ opacity: 0, scale: 0.9 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            transition={{ delay: index * 0.05 }}
-                                            style={{ 
-                                                width: shotWidth, 
-                                                height: 100, 
-                                                // 移除右边距，实现无缝衔接
-                                                borderRight: '1px solid #000',
-                                                flexShrink: 0,
-                                                position: 'relative'
+                                    return (
+                                    <motion.div
+                                        key={`${shot.sequence}-${index}`}
+                                        initial={{ opacity: 0, scale: 0.9 }}
+                                        animate={{ opacity: 1, scale: 1 }}
+                                        transition={{ delay: index * 0.05 }}
+                                        style={{ 
+                                            width: shotWidth, 
+                                            height: 100, 
+                                            borderRight: '1px solid #000',
+                                            flexShrink: 0,
+                                            position: 'relative'
+                                        }}
+                                    >
+                                        <Paper
+                                            sx={{
+                                                width: '100%',
+                                                height: '100%',
+                                                bgcolor: isSelected ? alpha(theme.palette.primary.main, 0.1) : '#222',
+                                                border: isSelected ? `2px solid ${theme.palette.primary.main}` : '1px solid #333',
+                                                borderRadius: 0,
+                                                overflow: 'hidden',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                position: 'relative',
+                                                '&:hover': { border: '1px solid #888' }
+                                            }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                const startOffset = orderedShots.slice(0, index).reduce((acc, s) => acc + s.duration, 0);
+                                                handleSeek({} as any, startOffset);
                                             }}
                                         >
-                                            <Paper
-                                                sx={{
-                                                    width: '100%',
-                                                    height: '100%',
-                                                    bgcolor: isSelected ? alpha(theme.palette.primary.main, 0.1) : '#222',
-                                                    border: isSelected ? `2px solid ${theme.palette.primary.main}` : '1px solid #333',
-                                                    borderRadius: 0, // 直角，像剪辑软件
-                                                    overflow: 'hidden',
-                                                    cursor: 'pointer',
-                                                    display: 'flex',
-                                                    flexDirection: 'column',
-                                                    position: 'relative',
-                                                    '&:hover': { border: '1px solid #888' }
-                                                }}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    // 点击 Shot 时跳转到该 Shot 的起始位置
-                                                    const startOffset = orderedShots.slice(0, index).reduce((acc, s) => acc + s.duration, 0);
-                                                    handleSeek(e as any, startOffset);
-                                                }}
-                                            >
-                                                {/* 缩略图条 - 真实的视频胶卷 */}
-                                                <Box sx={{ height: 40, bgcolor: '#000', display: 'flex', overflow: 'hidden', opacity: 0.9 }}>
-                                                    {shot.videoData?.videoPath ? (
-                                                        <TimelineFilmstrip 
-                                                            videoUrl={getFullUrl(shot.videoData.videoPath)} 
-                                                            duration={shot.duration}
-                                                            height={40}
-                                                            pxPerSec={pxPerSec}
-                                                        />
-                                                    ) : (
-                                                        // 没有视频时，使用分镜图作为重复背景
-                                                        Array.from({ length: Math.ceil(shot.duration) }).map((_, i) => (
-                                                            <Box key={i} sx={{ 
-                                                                width: pxPerSec, 
-                                                                height: '100%', 
-                                                                borderRight: '1px solid rgba(255,255,255,0.1)',
-                                                                backgroundImage: shot.imagePath ? `url(${getFullUrl(shot.imagePath)})` : 'none',
-                                                                backgroundSize: 'cover',
-                                                                backgroundPosition: 'center'
-                                                            }} />
-                                                        ))
-                                                    )}
-                                                </Box>
-
-                                                {/* 信息区 */}
-                                                <Box sx={{ flex: 1, p: 0.5, px: 1 }}>
-                                                    <Typography variant="caption" display="block" noWrap fontWeight={700} color="white">
-                                                        Shot {index + 1}
-                                                    </Typography>
-                                                    <Typography variant="caption" color="text.secondary" noWrap sx={{ fontSize: '0.65rem' }}>
-                                                        {shot.duration.toFixed(1)}s • {shot.prompt.substring(0, 15)}...
-                                                    </Typography>
-                                                </Box>
-                                                
-                                                {/* 剪辑把手 (Handles) - 仅选中时显示 */}
-                                                {isSelected && (
-                                                    <>
-                                                        {/* 右把手 - 调整时长 */}
-                                                        <Box 
-                                                            sx={{
-                                                                position: 'absolute', right: 0, top: 0, bottom: 0, width: 10,
-                                                                cursor: 'ew-resize',
-                                                                bgcolor: 'rgba(255,255,255,0.2)',
-                                                                '&:hover': { bgcolor: '#FF4081' },
-                                                                zIndex: 10,
-                                                                display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                                            }}
-                                                            onMouseDown={(e) => {
-                                                                e.stopPropagation();
-                                                                handleEditShot(index); // 暂时先调用原来的弹窗，后续改为拖拽逻辑
-                                                            }}
-                                                        >
-                                                            <Box sx={{ width: 2, height: 12, bgcolor: 'white', borderRadius: 1 }} />
-                                                        </Box>
-                                                    </>
+                                            <Box sx={{ height: 40, bgcolor: '#000', display: 'flex', overflow: 'hidden', opacity: 0.9 }}>
+                                                {shot.videoData?.videoPath ? (
+                                                    <TimelineFilmstrip 
+                                                        videoUrl={getFullUrl(shot.videoData.videoPath)} 
+                                                        duration={shot.duration}
+                                                        height={40}
+                                                        pxPerSec={pxPerSec}
+                                                    />
+                                                ) : (
+                                                    <Box sx={{ width: '100%', height: '100%', bgcolor: '#333' }} />
                                                 )}
-                                            </Paper>
-                                        </motion.div>
-                                    )})}
-                                </Box>
-                            </Box>
-                        </Paper>
-                </Box>
-            </Container>
-        </Box>
-    );
-};
+                                            </Box>
 
+                                            <Box sx={{ flex: 1, p: 0.5, px: 1 }}>
+                                                <Typography variant="caption" display="block" noWrap fontWeight={700} color="white">
+                                                    Shot {index + 1}
+                                                </Typography>
+                                                <Typography variant="caption" color="text.secondary" noWrap sx={{ fontSize: '0.65rem' }}>
+                                                    {shot.duration.toFixed(1)}s • {shot.prompt.substring(0, 15)}...
+                                                </Typography>
+                                            </Box>
+                                            
+                                            {/* 剪辑把手 */}
+                                            {isSelected && (
+                                                <Box 
+                                                    sx={{
+                                                        position: 'absolute', right: 0, top: 0, bottom: 0, width: 10,
+                                                        cursor: 'ew-resize',
+                                                        bgcolor: 'rgba(255,255,255,0.2)',
+                                                        '&:hover': { bgcolor: '#FF4081' },
+                                                        zIndex: 10,
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                                    }}
+                                                    onMouseDown={(e) => {
+                                                        e.stopPropagation();
+                                                        handleEditShot(index);
+                                                    }}
+                                                >
+                                                    <Box sx={{ width: 2, height: 12, bgcolor: 'white', borderRadius: 1 }} />
+                                                </Box>
+                                            )}
+                                        </Paper>
+                                    </motion.div>
+                                )})}
+                            </Box>
+                        </Box>
+                    </Paper>
+                </Box>
+
+                {/* Dialogs and Snackbars... */}
                 {/* Transition Dialog */}
                 <Dialog open={transitionDialogOpen} onClose={() => setTransitionDialogOpen(false)} maxWidth="sm" fullWidth
                     PaperProps={{ sx: { bgcolor: '#1e293b', backgroundImage: 'none' } }}>
