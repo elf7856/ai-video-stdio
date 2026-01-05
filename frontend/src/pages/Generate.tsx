@@ -108,6 +108,32 @@ const GeneratePage: React.FC = () => {
 
     // --- Logic ---
 
+    const saveToLocalStorage = (response: ScriptGenerateResponse, taskData?: VideoGenerationTask) => {
+        try {
+            const savedScript = {
+                id: Date.now().toString(),
+                topic,
+                style,
+                targetDuration,
+                shotCount,
+                script: response.script,
+                shots: response.shots,
+                totalDuration: response.totalDuration,
+                createdAt: new Date().toISOString(),
+                videoTask: taskData
+            };
+            const existing = localStorage.getItem('savedScripts');
+            const scripts = existing ? JSON.parse(existing) : [];
+            const existingIndex = scripts.findIndex((s: any) => s.topic === topic && s.style === style);
+            if (existingIndex >= 0) {
+                scripts[existingIndex] = savedScript;
+            } else {
+                scripts.unshift(savedScript);
+            }
+            localStorage.setItem('savedScripts', JSON.stringify(scripts.slice(0, 50)));
+        } catch (e) { console.error(e); }
+    };
+
     const handleGenerateScript = async () => {
         if (!topic.trim()) return;
         setHasStarted(true); // Switch to Studio Mode
@@ -205,16 +231,6 @@ const GeneratePage: React.FC = () => {
             setLoading(false);
         }
     };
-// ...
-                                scriptResult.shots.map((shot, idx) => {
-                                    // 处理图片路径
-                                    let bgImage = 'none';
-                                    if (shot.imagePath) {
-                                        bgImage = `url(${getFullUrl(shot.imagePath)})`;
-                                    }
-
-                                    return (
-
 
     const handleConfirmAndGenerate = async () => {
         if (!videoTask || !scriptResult) return;
@@ -244,32 +260,6 @@ const GeneratePage: React.FC = () => {
         } finally {
             setVideoGenerating(false);
         }
-    };
-
-    const saveToLocalStorage = (response: ScriptGenerateResponse, taskData?: VideoGenerationTask) => {
-        try {
-            const savedScript = {
-                id: Date.now().toString(),
-                topic,
-                style,
-                targetDuration,
-                shotCount,
-                script: response.script,
-                shots: response.shots,
-                totalDuration: response.totalDuration,
-                createdAt: new Date().toISOString(),
-                videoTask: taskData
-            };
-            const existing = localStorage.getItem('savedScripts');
-            const scripts = existing ? JSON.parse(existing) : [];
-            const existingIndex = scripts.findIndex((s: any) => s.topic === topic && s.style === style);
-            if (existingIndex >= 0) {
-                scripts[existingIndex] = savedScript;
-            } else {
-                scripts.unshift(savedScript);
-            }
-            localStorage.setItem('savedScripts', JSON.stringify(scripts.slice(0, 50)));
-        } catch (e) { console.error(e); }
     };
 
     const copyToClipboard = (text: string) => {
@@ -626,6 +616,7 @@ const GeneratePage: React.FC = () => {
                                     }}
                                 />
 
+                                {/* ... (Rest of sidebar) ... */}
                                 <Typography variant="caption" color="#666" fontWeight={700} sx={{ letterSpacing: 1, mb: 2, display: 'block' }}>
                                     STYLE
                                 </Typography>
