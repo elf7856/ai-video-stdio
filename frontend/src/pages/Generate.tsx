@@ -355,10 +355,10 @@ const GeneratePage: React.FC = () => {
                                  letterSpacing: '-1px',
                                  mb: 2
                              }}>
-                                What will you create?
+                                Orenix AI
                              </Typography>
                              <Typography variant="h6" color="#666" fontWeight={300}>
-                                 Describe your vision, choose a style, and let AI do the rest.
+                                 Next Generation Generative Video Platform
                              </Typography>
                         </Box>
 

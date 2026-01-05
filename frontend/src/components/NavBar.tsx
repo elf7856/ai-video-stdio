@@ -49,11 +49,12 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick, minimal = false }) => {
                     component="div"
                     sx={{
                         cursor: 'pointer',
-                        fontWeight: minimal ? 600 : 500
+                        fontWeight: minimal ? 700 : 600, // 略微加粗品牌名
+                        letterSpacing: '0.5px'
                     }}
                     onClick={() => navigate('/')}
                 >
-                    Video Creator
+                    Orenix AI
                 </Typography>
                 {minimal && (
                     <Box sx={{
