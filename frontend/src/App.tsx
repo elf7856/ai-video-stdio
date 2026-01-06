@@ -10,6 +10,7 @@ import TemplatesPage from './pages/Templates';
 import ContentPage from './pages/Content';
 import Studio from './pages/Studio';
 import GeneratePage from './pages/Generate';
+import TeamPage from './pages/Team';
 
 const App: React.FC = () => {
     const [isSidebarOpen, setSidebarOpen] = useState(true);
@@ -63,6 +64,7 @@ const App: React.FC = () => {
                     <Route path="/" element={<HomePage />} />
                     <Route path="/templates" element={<TemplatesPage />} />
                     <Route path="/content" element={<ContentPage />} />
+                    <Route path="/team" element={<TeamPage />} />
                     {/* Fallback for editor routes if isStudioPage check fails or during transition */}
                     <Route path="/editor/*" element={<Studio />} />
                 </Routes>

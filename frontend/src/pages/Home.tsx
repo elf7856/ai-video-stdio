@@ -290,6 +290,9 @@ const HomePage: React.FC = () => {
                             © 2026 Orenix AI. All rights reserved.
                         </Typography>
                         <Box sx={{ display: 'flex', gap: 3 }}>
+                            <RouterLink to="/team" style={{ textDecoration: 'none' }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ '&:hover': { color: 'white' } }}>Team</Typography>
+                            </RouterLink>
                             <Typography variant="caption" color="text.secondary" sx={{ cursor: 'pointer', '&:hover': { color: 'white' } }}>Privacy Policy</Typography>
                             <Typography variant="caption" color="text.secondary" sx={{ cursor: 'pointer', '&:hover': { color: 'white' } }}>Terms of Service</Typography>
                         </Box>
