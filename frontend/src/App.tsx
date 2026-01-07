@@ -18,10 +18,12 @@ const App: React.FC = () => {
 
     console.log('[App] Current location:', location.pathname);
 
-    // Studio页面使用全屏布局，不需要Sidebar
-    const isStudioPage = location.pathname.startsWith('/generate') || 
-                         location.pathname.startsWith('/editor') || 
-                         location.pathname.startsWith('/studio');
+    // 全屏页面（无侧边栏）
+    const isFullScreenPage = location.pathname.startsWith('/generate') || 
+                             location.pathname.startsWith('/editor') || 
+                             location.pathname.startsWith('/studio') ||
+                             location.pathname === '/' ||
+                             location.pathname === '/team';
 
     const toggleSidebar = () => {
         setSidebarOpen(!isSidebarOpen);
@@ -32,13 +34,15 @@ const App: React.FC = () => {
         closed: { marginLeft: 70, transition: { type: 'spring', stiffness: 300, damping: 30 } },
     } as const;
 
-    // Studio页面使用简化布局
-    if (isStudioPage) {
+    // 全屏页面布局
+    if (isFullScreenPage) {
+        const isHomePage = location.pathname === '/';
         return (
             <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
                 <Navbar onMenuClick={toggleSidebar} minimal />
-                <Box sx={{ flex: 1, overflow: 'hidden' }}>
+                <Box sx={{ flex: 1, overflow: isHomePage ? 'auto' : 'hidden' }}>
                     <Routes>
+                        <Route path="/" element={<HomePage />} />
                         <Route path="/generate" element={<GeneratePage />} />
                         <Route path="/editor" element={<Studio />} />
                         <Route path="/editor/:projectId" element={<Studio />} />

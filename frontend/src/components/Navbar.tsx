@@ -3,6 +3,7 @@ import { AppBar, Toolbar, Typography, IconButton, Box } from '@mui/material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import MenuIcon from '@mui/icons-material/Menu';
 import HomeIcon from '@mui/icons-material/Home';
+import FolderIcon from '@mui/icons-material/Folder';
 
 interface NavbarProps {
     onMenuClick: () => void;
@@ -13,6 +14,7 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick, minimal = false }) => {
     const navigate = useNavigate();
     const location = useLocation();
     const isGeneratePage = location.pathname === '/generate';
+    const isHomePage = location.pathname === '/';
 
     return (
         <AppBar
@@ -52,13 +54,26 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick, minimal = false }) => {
                     sx={{
                         cursor: 'pointer',
                         fontWeight: minimal ? 700 : 600, // 略微加粗品牌名
-                        letterSpacing: '0.5px'
+                        letterSpacing: '0.5px',
+                        flexGrow: 1
                     }}
                     onClick={() => navigate('/')}
                 >
                     Orenix AI
                 </Typography>
-                {minimal && !isGeneratePage && (
+                
+                {minimal && isGeneratePage && (
+                    <IconButton
+                        color="inherit"
+                        onClick={() => navigate('/content')}
+                        title="My Content"
+                        sx={{ ml: 1 }}
+                    >
+                        <FolderIcon />
+                    </IconButton>
+                )}
+
+                {minimal && !isGeneratePage && !isHomePage && (
                     <Box sx={{
                         ml: 2,
                         px: 1.5,

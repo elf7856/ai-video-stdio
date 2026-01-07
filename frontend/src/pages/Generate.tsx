@@ -337,11 +337,7 @@ const GeneratePage: React.FC = () => {
                 }} />
 
                 <Container maxWidth="md" sx={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.8 }}
-                    >
+                    <Box>
                         <Box sx={{ mb: 6 }}>
                              <Typography variant="h2" fontWeight={700} sx={{ 
                                  background: 'linear-gradient(to right, #fff 20%, #888 100%)',
@@ -540,7 +536,7 @@ const GeneratePage: React.FC = () => {
                             </Button>
                         </Stack>
 
-                    </motion.div>
+                    </Box>
                 </Container>
             </Box>
         );

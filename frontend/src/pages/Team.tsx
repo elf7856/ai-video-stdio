@@ -2,7 +2,6 @@ import React from 'react';
 import { Box, Container, Typography, Grid, Card, CardContent, Avatar, Chip, Stack, IconButton, useTheme, alpha } from '@mui/material';
 import { motion } from 'framer-motion';
 import LinkedInIcon from '@mui/icons-material/LinkedIn';
-import GitHubIcon from '@mui/icons-material/GitHub';
 import EmailIcon from '@mui/icons-material/Email';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import WorkIcon from '@mui/icons-material/Work';
@@ -148,7 +147,23 @@ const TeamPage: React.FC = () => {
                                                     ))}
                                                 </Box>
 
-                                                <Stack direction="row" spacing={1}>
+                                                <Stack direction="row" spacing={1} alignItems="center">
+                                                    <IconButton 
+                                                        href={member.links.linkedin} 
+                                                        target="_blank"
+                                                        sx={{ 
+                                                            color: 'white', 
+                                                            bgcolor: alpha('#0077b5', 0.1),
+                                                            '&:hover': { 
+                                                                color: 'white', 
+                                                                bgcolor: '#0077b5',
+                                                                transform: 'scale(1.1)'
+                                                            },
+                                                            transition: 'all 0.2s'
+                                                        }}
+                                                    >
+                                                        <LinkedInIcon />
+                                                    </IconButton>
                                                     <IconButton 
                                                         href={member.links.email} 
                                                         sx={{ 

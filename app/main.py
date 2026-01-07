@@ -27,6 +27,7 @@ from app.api.video_generation import router as video_generation_router
 from app.api.upload import router as upload_router
 from app.api.editor import router as editor_router  # 新增：视频编辑器
 from app.api.quality import router as quality_router  # 新增：质量检查
+from app.api.templates import router as templates_router # 新增：模板
 from app.api import auth, users  # 新增
 import app.models.user  # 确保模型注册
 # from app.services.mcp.web_wrapper import MCPWebWrapper  # 临时禁用
@@ -68,6 +69,7 @@ app.include_router(images.router)
 app.include_router(ai_director_router)
 app.include_router(upload_router)
 app.include_router(quality_router)  # 新增：质量检查
+app.include_router(templates_router) # 新增：模板
 
 # 初始化MCP服务 - 临时禁用避免启动错误
 # mcp_wrapper = MCPWebWrapper(app)

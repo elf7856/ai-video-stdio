@@ -45,6 +45,7 @@ const theme = createTheme({
   },
   typography: {
     fontFamily: [
+      '"Plus Jakarta Sans"',
       '"Inter"',
       '-apple-system',
       'BlinkMacSystemFont',

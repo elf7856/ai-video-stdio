@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     pika_api_key: str = Field(default="", alias="PIKA_API_KEY", description="Pika Labs API密钥")
     kling_api_key: str = Field(default="", alias="KLING_API_KEY", description="Kling AI API密钥")
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY", description="Google Gemini API密钥")
+    pexels_api_key: str = Field(default="", alias="PEXELS_API_KEY", description="Pexels API密钥")
 
     # 多平台上传配置
     google_client_id: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_ID", description="Google OAuth Client ID")
