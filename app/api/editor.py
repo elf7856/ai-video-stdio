@@ -15,6 +15,8 @@ from app.services.editor import TimelineRenderer, SubtitleService
 from app.core.config import settings
 from app.utils.database import get_db
 from app.crud.editor import EditorProjectCRUD, SubtitleCRUD
+from app.api.deps import get_current_user_optional
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/editor", tags=["视频编辑器"])
@@ -45,7 +47,11 @@ class SubtitleGenerateRequest(BaseModel):
 
 
 @router.post("/projects", response_model=EditorProject)
-async def create_project(request: ProjectCreateRequest, db: Session = Depends(get_db)):
+async def create_project(
+    request: ProjectCreateRequest, 
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
     """
     创建新的编辑项目
 
@@ -53,6 +59,7 @@ async def create_project(request: ProjectCreateRequest, db: Session = Depends(ge
     """
     try:
         project_id = f"editor_project_{uuid.uuid4().hex[:12]}"
+        user_id = str(current_user.id) if current_user else None
 
         project = EditorProject(
             id=project_id,
@@ -61,7 +68,8 @@ async def create_project(request: ProjectCreateRequest, db: Session = Depends(ge
             timeline=request.timeline,
             status=ProjectStatus.DRAFT,
             created_at=datetime.now(),
-            updated_at=datetime.now()
+            updated_at=datetime.now(),
+            created_by=user_id  # Set creator
         )
 
         # 保存到数据库
@@ -124,14 +132,27 @@ async def list_projects(
     status: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     获取项目列表
 
-    返回所有项目，可按状态过滤
+    返回所有项目，可按状态过滤。
+    如果用户已登录，只返回该用户的项目。
+    如果未登录，(Demo模式) 返回所有无主项目或抛出401。
+    这里为了Demo方便，如果未登录，返回所有项目 (或者空列表)。
     """
-    projects = EditorProjectCRUD.list(db, status=status, limit=limit, offset=offset)
+    user_id = str(current_user.id) if current_user else None
+    
+    # 策略：如果未登录，查看 public/demo 项目？或者查看所有？
+    # 为了隐私，如果未登录，最好只看 created_by=None 的项目，或者空。
+    # 用户之前的痛点是 "I see everyone's content".
+    # 所以：
+    # 1. 登录 -> user_id filtering.
+    # 2. 未登录 -> 只能看到 created_by IS NULL 的项目 (匿名项目).
+    
+    projects = EditorProjectCRUD.list(db, status=status, user_id=user_id, limit=limit, offset=offset)
     return projects
 
 
