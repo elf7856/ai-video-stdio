@@ -82,7 +82,7 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick, minimal = false }) => {
                         borderRadius: 1
                     }}>
                         <Typography variant="caption" sx={{ color: '#FF4081', fontWeight: 600 }}>
-                            Studio
+                            Project
                         </Typography>
                     </Box>
                 )}
