@@ -21,7 +21,6 @@ import { motion } from 'framer-motion';
 import { getFullUrl } from '../utils/url';
 import TimelineFilmstrip from '../components/studio/TimelineFilmstrip';
 import type { Shot, GeneratedVideo } from '../api/types';
-import heroVideo from '../assets/videos/hero.mp4';
 
 interface ShotWithVideo extends Shot {
     videoData?: GeneratedVideo;
@@ -54,34 +53,12 @@ const ProjectPage: React.FC = () => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
 
-    // Default Mock Data
-    const defaultMockData: ProjectData = {
-        taskId: projectId || 'task_54e10280',
-        topic: "Project Task 54e10280",
-        shots: Array.from({ length: 6 }).map((_, i) => ({
-            sequence: i + 1,
-            prompt: `Shot ${i + 1} - A cinematic scene`,
-            duration: 5,
-            shotType: 'medium shot'
-        })),
-        generatedVideos: Array.from({ length: 6 }).map((_, i) => ({
-            sequence: i + 1,
-            videoPath: heroVideo,
-            status: 'success'
-        })),
-        finalVideo: heroVideo,
-        status: 'completed',
-        logs: [
-            { timestamp: '00:00', level: 'info', message: 'Project initialized' },
-            { timestamp: '00:01', level: 'success', message: 'All shots generated successfully' }
-        ]
-    };
-
     // State Management
     const [activeTab, setActiveTab] = useState(0); // 0: Media, 1: Script, 2: Logs
-    const [projectData] = useState<ProjectData>(location.state || defaultMockData);
+    const [projectData, setProjectData] = useState<ProjectData | null>(null);
     const [orderedShots, setOrderedShots] = useState<ShotWithVideo[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     // Playback State
     const [currentShotIndex, setCurrentShotIndex] = useState(0);
@@ -93,6 +70,7 @@ const ProjectPage: React.FC = () => {
 
     // Timeline State
     const [pxPerSec, setPxPerSec] = useState(40);
+    const [isDraggingTimeline, setIsDraggingTimeline] = useState(false);
 
     // Editing State
     const [editingShotIndex, setEditingShotIndex] = useState<number | null>(null);
@@ -106,7 +84,69 @@ const ProjectPage: React.FC = () => {
         severity: 'success' | 'error' | 'info' | 'warning';
     }>({ open: false, message: '', severity: 'info' });
 
-    // Initialize shots
+    // Load project data from API
+    useEffect(() => {
+        const loadProjectData = async () => {
+            setLoading(true);
+            setError(null);
+
+            try {
+                // First check if data was passed via location.state
+                if (location.state) {
+                    setProjectData(location.state as ProjectData);
+                    return;
+                }
+
+                // Otherwise, fetch from API using projectId
+                const taskId = projectId || 'task_54e10280';
+                console.log('[Project] Loading task:', taskId);
+
+                const response = await fetch(`http://localhost:8000/api/video-generation/task/${taskId}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load project: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                console.log('[Project] Loaded data:', result);
+
+                // Extract data from the API response structure
+                const data = result.data || result;
+                const shots = data.shots || [];
+
+                // Convert shots to include videoData
+                const shotsWithVideo = shots.map((shot: any) => ({
+                    ...shot,
+                    videoData: shot.videoPath ? {
+                        videoPath: shot.videoPath,
+                        sequence: shot.sequence,
+                        status: shot.status
+                    } : undefined
+                }));
+
+                setProjectData({
+                    taskId: data.taskId || taskId,
+                    topic: data.config?.topic || 'Untitled Project',
+                    style: data.config?.style,
+                    script: data.script,
+                    shots: shotsWithVideo,
+                    totalDuration: shots.reduce((sum: number, s: any) => sum + (s.duration || 0), 0),
+                    generatedVideos: shotsWithVideo.map((s: any) => s.videoData).filter(Boolean),
+                    finalVideo: data.finalVideo,
+                    status: data.status,
+                    logs: data.logs || []
+                });
+            } catch (err: any) {
+                console.error('[Project] Load error:', err);
+                setError(err.message || 'Failed to load project data');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadProjectData();
+    }, [projectId, location.state]);
+
+    // Initialize shots when projectData changes
     useEffect(() => {
         if (projectData?.shots) {
             const initialShots = projectData.shots.map(shot => ({
@@ -116,7 +156,6 @@ const ProjectPage: React.FC = () => {
             setOrderedShots(initialShots);
             const total = initialShots.reduce((sum, s) => sum + s.duration, 0);
             setTotalDuration(total);
-            setLoading(false);
         }
     }, [projectData]);
 
@@ -405,116 +444,135 @@ const ProjectPage: React.FC = () => {
                     display: 'flex',
                     flexDirection: 'column',
                     position: 'relative',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     p: 3
                 }}>
-                    {/* Video Player */}
+                    {/* Video Player - 70% Size */}
                     <Box sx={{
-                        flex: 1,
+                        width: '70%',
+                        height: '70%',
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center'
+                        justifyContent: 'center',
+                        position: 'relative',
+                        overflow: 'hidden',
+                        bgcolor: '#000',
+                        borderRadius: 1,
+                        boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
                     }}>
-                        <Paper sx={{
-                            width: '100%',
-                            maxWidth: '1000px',
-                            aspectRatio: '16/9',
-                            bgcolor: 'black',
-                            borderRadius: 1,
-                            overflow: 'hidden',
-                            position: 'relative',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            border: '1px solid #333'
-                        }}>
-                            {currentShot?.videoData?.videoPath ? (
-                                <video
-                                    ref={videoRef}
-                                    src={getFullUrl(currentShot.videoData.videoPath)}
-                                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                                    onTimeUpdate={handleTimeUpdate}
-                                    onPlay={() => setIsPlaying(true)}
-                                    onPause={() => setIsPlaying(false)}
-                                />
-                            ) : (
-                                <Box sx={{ textAlign: 'center' }}>
-                                    <Typography variant="h6" color="text.secondary">
-                                        镜头 #{currentShotIndex + 1}
-                                    </Typography>
-                                    <Typography color="text.secondary">
-                                        等待视频生成
-                                    </Typography>
-                                </Box>
-                            )}
-
-                            {/* Current Shot Info Overlay */}
-                            <Box sx={{
-                                position: 'absolute',
-                                top: 16,
-                                left: 16,
-                                display: 'flex',
-                                gap: 1
-                            }}>
-                                <Chip
-                                    label={`镜头 ${currentShotIndex + 1}/${orderedShots.length}`}
-                                    size="small"
-                                    sx={{ bgcolor: alpha(theme.palette.background.paper, 0.9) }}
-                                />
-                                {currentShot?.shotType && (
-                                    <Chip
-                                        label={currentShot.shotType}
-                                        size="small"
-                                        sx={{ bgcolor: alpha(theme.palette.primary.main, 0.9) }}
-                                    />
-                                )}
-                            </Box>
-                        </Paper>
-                    </Box>
-
-                    {/* Player Controls */}
-                    <Box sx={{ mt: 2, maxWidth: '1000px', mx: 'auto', width: '100%' }}>
-                        {/* Progress Bar */}
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                            <Typography variant="caption" sx={{ minWidth: 40 }}>
-                                {formatTime(globalTime)}
-                            </Typography>
-                            <Slider
-                                value={globalTime}
-                                max={totalDuration || 100}
-                                onChange={handleSeek}
-                                sx={{ flex: 1 }}
+                        {currentShot?.videoData?.videoPath ? (
+                            <video
+                                ref={videoRef}
+                                src={getFullUrl(currentShot.videoData.videoPath)}
+                                style={{
+                                    width: '100%',
+                                    height: '100%',
+                                    objectFit: 'cover',
+                                    backgroundColor: '#000'
+                                }}
+                                onTimeUpdate={handleTimeUpdate}
+                                onPlay={() => setIsPlaying(true)}
+                                onPause={() => setIsPlaying(false)}
                             />
-                            <Typography variant="caption" sx={{ minWidth: 40 }}>
-                                {formatTime(totalDuration)}
-                            </Typography>
+                        ) : (
+                            <Box sx={{ textAlign: 'center' }}>
+                                <CircularProgress sx={{ mb: 2 }} />
+                                <Typography variant="h6" color="text.secondary">
+                                    镜头 #{currentShotIndex + 1}
+                                </Typography>
+                                <Typography color="text.secondary">
+                                    {error || '等待视频生成'}
+                                </Typography>
+                            </Box>
+                        )}
+
+                        {/* Current Shot Info Overlay */}
+                        <Box sx={{
+                            position: 'absolute',
+                            top: -40,
+                            left: 0,
+                            display: 'flex',
+                            gap: 1
+                        }}>
+                            <Chip
+                                label={`镜头 ${currentShotIndex + 1}/${orderedShots.length}`}
+                                size="small"
+                                sx={{ bgcolor: alpha(theme.palette.background.paper, 0.9) }}
+                            />
+                            {currentShot?.shotType && (
+                                <Chip
+                                    label={currentShot.shotType}
+                                    size="small"
+                                    sx={{ bgcolor: alpha(theme.palette.primary.main, 0.9) }}
+                                />
+                            )}
                         </Box>
 
-                        {/* Control Buttons */}
-                        <Stack direction="row" justifyContent="center" alignItems="center" spacing={2}>
-                            <IconButton
-                                onClick={handlePlayPause}
-                                sx={{
-                                    bgcolor: 'primary.main',
-                                    '&:hover': { bgcolor: 'primary.dark' },
-                                    width: 48,
-                                    height: 48
-                                }}
-                            >
-                                {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                            </IconButton>
-                            <Stack direction="row" spacing={1} alignItems="center">
-                                <IconButton onClick={toggleMute} size="small">
-                                    {isMuted ? <MusicIcon /> : <MusicIcon />}
-                                </IconButton>
+                        {/* Player Controls Overlay */}
+                        <Box sx={{
+                            position: 'absolute',
+                            bottom: -80,
+                            left: 0,
+                            right: 0,
+                            bgcolor: 'rgba(0,0,0,0.7)',
+                            backdropFilter: 'blur(10px)',
+                            p: 2,
+                            borderRadius: 1
+                        }}>
+                            {/* Progress Bar */}
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+                                <Typography variant="caption" sx={{ minWidth: 40, color: 'white' }}>
+                                    {formatTime(globalTime)}
+                                </Typography>
                                 <Slider
-                                    value={isMuted ? 0 : volume}
-                                    max={1}
-                                    step={0.1}
-                                    onChange={handleVolumeChange}
-                                    sx={{ width: 100 }}
+                                    value={globalTime}
+                                    max={totalDuration || 100}
+                                    onChange={handleSeek}
+                                    sx={{
+                                        flex: 1,
+                                        '& .MuiSlider-thumb': {
+                                            width: 16,
+                                            height: 16
+                                        },
+                                        '& .MuiSlider-rail': {
+                                            bgcolor: 'rgba(255,255,255,0.3)'
+                                        }
+                                    }}
                                 />
+                                <Typography variant="caption" sx={{ minWidth: 40, color: 'white' }}>
+                                    {formatTime(totalDuration)}
+                                </Typography>
+                            </Box>
+
+                            {/* Control Buttons */}
+                            <Stack direction="row" justifyContent="center" alignItems="center" spacing={2}>
+                                <IconButton
+                                    onClick={handlePlayPause}
+                                    sx={{
+                                        bgcolor: 'primary.main',
+                                        color: 'white',
+                                        '&:hover': { bgcolor: 'primary.dark' },
+                                        width: 40,
+                                        height: 40
+                                    }}
+                                >
+                                    {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                                </IconButton>
+                                <Stack direction="row" spacing={1} alignItems="center">
+                                    <IconButton onClick={toggleMute} size="small" sx={{ color: 'white' }}>
+                                        {isMuted ? <MusicIcon /> : <MusicIcon />}
+                                    </IconButton>
+                                    <Slider
+                                        value={isMuted ? 0 : volume}
+                                        max={1}
+                                        step={0.1}
+                                        onChange={handleVolumeChange}
+                                        sx={{ width: 100 }}
+                                    />
+                                </Stack>
                             </Stack>
-                        </Stack>
+                        </Box>
                     </Box>
                 </Box>
 
@@ -673,7 +731,6 @@ const ProjectPage: React.FC = () => {
                     bgcolor: '#1e1e1e'
                 }}>
                     <Stack direction="row" spacing={2} alignItems="center">
-                        <Typography variant="subtitle2" fontWeight={700}>Timeline</Typography>
                         <Stack direction="row" spacing={1} alignItems="center">
                             <IconButton size="small" onClick={() => setPxPerSec(Math.max(10, pxPerSec - 10))}>
                                 <Typography fontSize="small">-</Typography>
@@ -707,6 +764,17 @@ const ProjectPage: React.FC = () => {
                         bgcolor: '#121212',
                         '&::-webkit-scrollbar': { height: 10 },
                         '&::-webkit-scrollbar-thumb': { bgcolor: '#444', borderRadius: 5 }
+                    }}
+                    onClick={(e) => {
+                        // Click on timeline to seek
+                        if (timelineRef.current && !isDraggingTimeline) {
+                            const rect = timelineRef.current.getBoundingClientRect();
+                            const clickX = e.clientX - rect.left + timelineRef.current.scrollLeft;
+                            const clickTime = (clickX - 16) / pxPerSec;
+                            if (clickTime >= 0 && clickTime <= totalDuration) {
+                                handleSeek({} as any, clickTime);
+                            }
+                        }
                     }}
                 >
                     {/* Ruler */}
@@ -746,19 +814,46 @@ const ProjectPage: React.FC = () => {
                         display: 'flex',
                         position: 'relative'
                     }}>
-                        {/* Global Playhead */}
-                        <Box sx={{
-                            position: 'absolute',
-                            left: 16 + (globalTime * pxPerSec),
-                            top: 0,
-                            bottom: 0,
-                            width: 2,
-                            bgcolor: '#FF4081',
-                            zIndex: 20,
-                            pointerEvents: 'none',
-                            transition: 'left 0.1s linear',
-                            boxShadow: '0 0 8px rgba(255, 64, 129, 0.8)'
-                        }}>
+                        {/* Global Playhead - Draggable */}
+                        <Box
+                            sx={{
+                                position: 'absolute',
+                                left: 16 + (globalTime * pxPerSec),
+                                top: 0,
+                                bottom: 0,
+                                width: 2,
+                                bgcolor: '#FF4081',
+                                zIndex: 20,
+                                cursor: 'ew-resize',
+                                transition: isDraggingTimeline ? 'none' : 'left 0.1s linear',
+                                boxShadow: '0 0 8px rgba(255, 64, 129, 0.8)',
+                                '&:hover': {
+                                    width: 4
+                                }
+                            }}
+                            onMouseDown={(e) => {
+                                e.preventDefault();
+                                setIsDraggingTimeline(true);
+
+                                const handleMouseMove = (moveEvent: MouseEvent) => {
+                                    if (timelineRef.current) {
+                                        const rect = timelineRef.current.getBoundingClientRect();
+                                        const moveX = moveEvent.clientX - rect.left + timelineRef.current.scrollLeft;
+                                        const newTime = Math.max(0, Math.min(totalDuration, (moveX - 16) / pxPerSec));
+                                        handleSeek({} as any, newTime);
+                                    }
+                                };
+
+                                const handleMouseUp = () => {
+                                    setIsDraggingTimeline(false);
+                                    document.removeEventListener('mousemove', handleMouseMove);
+                                    document.removeEventListener('mouseup', handleMouseUp);
+                                };
+
+                                document.addEventListener('mousemove', handleMouseMove);
+                                document.addEventListener('mouseup', handleMouseUp);
+                            }}
+                        >
                             <Box sx={{
                                 position: 'absolute',
                                 top: -4,
@@ -834,33 +929,65 @@ const ProjectPage: React.FC = () => {
                                             </Typography>
                                         </Box>
 
-                                        {/* Edit Handle */}
-                                        {isSelected && (
-                                            <Tooltip title="Edit Shot">
-                                                <Box
-                                                    sx={{
-                                                        position: 'absolute',
-                                                        right: 0,
-                                                        top: 0,
-                                                        bottom: 0,
-                                                        width: 10,
-                                                        cursor: 'ew-resize',
-                                                        bgcolor: 'rgba(255,255,255,0.2)',
-                                                        '&:hover': { bgcolor: '#FF4081' },
-                                                        zIndex: 10,
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center'
-                                                    }}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleEditShot(index);
-                                                    }}
-                                                >
-                                                    <Box sx={{ width: 2, height: 12, bgcolor: 'white', borderRadius: 1 }} />
-                                                </Box>
-                                            </Tooltip>
-                                        )}
+                                        {/* Resize Handle - Drag to change duration */}
+                                        <Tooltip title="Drag to resize">
+                                            <Box
+                                                sx={{
+                                                    position: 'absolute',
+                                                    right: 0,
+                                                    top: 0,
+                                                    bottom: 0,
+                                                    width: 10,
+                                                    cursor: 'ew-resize',
+                                                    bgcolor: isSelected ? 'rgba(255,64,129,0.3)' : 'rgba(255,255,255,0.1)',
+                                                    '&:hover': { bgcolor: '#FF4081' },
+                                                    zIndex: 10,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center'
+                                                }}
+                                                onMouseDown={(e) => {
+                                                    e.stopPropagation();
+                                                    e.preventDefault();
+
+                                                    const startX = e.clientX;
+                                                    const startDuration = shot.duration;
+                                                    const videoElement = document.createElement('video');
+                                                    videoElement.src = getFullUrl(shot.videoData?.videoPath || '');
+
+                                                    // Get actual video duration
+                                                    videoElement.addEventListener('loadedmetadata', () => {
+                                                        const maxDuration = videoElement.duration;
+
+                                                        const handleMouseMove = (moveEvent: MouseEvent) => {
+                                                            const deltaX = moveEvent.clientX - startX;
+                                                            const deltaDuration = deltaX / pxPerSec;
+                                                            const newDuration = Math.max(1, Math.min(maxDuration, startDuration + deltaDuration));
+
+                                                            // Update shot duration in real-time
+                                                            const newShots = [...orderedShots];
+                                                            newShots[index] = { ...newShots[index], duration: newDuration };
+                                                            setOrderedShots(newShots);
+                                                        };
+
+                                                        const handleMouseUp = () => {
+                                                            document.removeEventListener('mousemove', handleMouseMove);
+                                                            document.removeEventListener('mouseup', handleMouseUp);
+                                                            setSnackbar({
+                                                                open: true,
+                                                                message: `镜头 ${index + 1} 时长已更新`,
+                                                                severity: 'success'
+                                                            });
+                                                        };
+
+                                                        document.addEventListener('mousemove', handleMouseMove);
+                                                        document.addEventListener('mouseup', handleMouseUp);
+                                                    });
+                                                }}
+                                            >
+                                                <Box sx={{ width: 2, height: 12, bgcolor: 'white', borderRadius: 1 }} />
+                                            </Box>
+                                        </Tooltip>
                                     </Paper>
                                 </motion.div>
                             );
