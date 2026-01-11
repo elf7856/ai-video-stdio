@@ -149,13 +149,50 @@ const ProjectPage: React.FC = () => {
     // Initialize shots when projectData changes
     useEffect(() => {
         if (projectData?.shots) {
-            const initialShots = projectData.shots.map(shot => ({
-                ...shot,
-                videoData: projectData.generatedVideos?.find(v => v.sequence === shot.sequence),
-            }));
-            setOrderedShots(initialShots);
-            const total = initialShots.reduce((sum, s) => sum + s.duration, 0);
-            setTotalDuration(total);
+            const loadActualDurations = async () => {
+                const shotsWithActualDuration = await Promise.all(
+                    projectData.shots.map(async (shot) => {
+                        const videoData = projectData.generatedVideos?.find(v => v.sequence === shot.sequence);
+
+                        // Load actual video duration
+                        let actualDuration = shot.duration;
+                        if (videoData?.videoPath) {
+                            try {
+                                const videoElement = document.createElement('video');
+                                videoElement.src = getFullUrl(videoData.videoPath);
+
+                                actualDuration = await new Promise<number>((resolve) => {
+                                    videoElement.addEventListener('loadedmetadata', () => {
+                                        resolve(videoElement.duration);
+                                    });
+                                    videoElement.addEventListener('error', () => {
+                                        console.error(`Failed to load video: ${videoData.videoPath}`);
+                                        resolve(shot.duration); // Fallback to API duration
+                                    });
+                                    videoElement.load();
+                                });
+
+                                console.log(`[Shot ${shot.sequence}] API duration: ${shot.duration}s, Actual duration: ${actualDuration.toFixed(2)}s`);
+                            } catch (error) {
+                                console.error(`Error loading video duration for shot ${shot.sequence}:`, error);
+                            }
+                        }
+
+                        return {
+                            ...shot,
+                            duration: actualDuration, // Use actual duration from video file
+                            videoData,
+                        };
+                    })
+                );
+
+                setOrderedShots(shotsWithActualDuration);
+                const total = shotsWithActualDuration.reduce((sum, s) => sum + s.duration, 0);
+                setTotalDuration(total);
+                console.log(`[Project] Total duration: ${total.toFixed(2)}s`);
+            };
+
+            loadActualDurations();
         }
     }, [projectData]);
 
@@ -443,23 +480,18 @@ const ProjectPage: React.FC = () => {
                     bgcolor: '#050505',
                     display: 'flex',
                     flexDirection: 'column',
-                    position: 'relative',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    p: 3
+                    position: 'relative'
                 }}>
-                    {/* Video Player - 70% Size */}
+                    {/* Video Player - 100% Size */}
                     <Box sx={{
-                        width: '70%',
-                        height: '70%',
+                        width: '100%',
+                        height: '100%',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         position: 'relative',
                         overflow: 'hidden',
-                        bgcolor: '#000',
-                        borderRadius: 1,
-                        boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
+                        bgcolor: '#000'
                     }}>
                         {currentShot?.videoData?.videoPath ? (
                             <video
@@ -490,8 +522,8 @@ const ProjectPage: React.FC = () => {
                         {/* Current Shot Info Overlay */}
                         <Box sx={{
                             position: 'absolute',
-                            top: -40,
-                            left: 0,
+                            top: 16,
+                            left: 16,
                             display: 'flex',
                             gap: 1
                         }}>
@@ -512,13 +544,12 @@ const ProjectPage: React.FC = () => {
                         {/* Player Controls Overlay */}
                         <Box sx={{
                             position: 'absolute',
-                            bottom: -80,
+                            bottom: 0,
                             left: 0,
                             right: 0,
                             bgcolor: 'rgba(0,0,0,0.7)',
                             backdropFilter: 'blur(10px)',
-                            p: 2,
-                            borderRadius: 1
+                            p: 2
                         }}>
                             {/* Progress Bar */}
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
@@ -952,37 +983,45 @@ const ProjectPage: React.FC = () => {
 
                                                     const startX = e.clientX;
                                                     const startDuration = shot.duration;
+
+                                                    // Get actual video duration from the video element
                                                     const videoElement = document.createElement('video');
                                                     videoElement.src = getFullUrl(shot.videoData?.videoPath || '');
 
-                                                    // Get actual video duration
+                                                    let maxDuration = startDuration; // Default to current duration
+
+                                                    // Try to get actual video duration
                                                     videoElement.addEventListener('loadedmetadata', () => {
-                                                        const maxDuration = videoElement.duration;
-
-                                                        const handleMouseMove = (moveEvent: MouseEvent) => {
-                                                            const deltaX = moveEvent.clientX - startX;
-                                                            const deltaDuration = deltaX / pxPerSec;
-                                                            const newDuration = Math.max(1, Math.min(maxDuration, startDuration + deltaDuration));
-
-                                                            // Update shot duration in real-time
-                                                            const newShots = [...orderedShots];
-                                                            newShots[index] = { ...newShots[index], duration: newDuration };
-                                                            setOrderedShots(newShots);
-                                                        };
-
-                                                        const handleMouseUp = () => {
-                                                            document.removeEventListener('mousemove', handleMouseMove);
-                                                            document.removeEventListener('mouseup', handleMouseUp);
-                                                            setSnackbar({
-                                                                open: true,
-                                                                message: `镜头 ${index + 1} 时长已更新`,
-                                                                severity: 'success'
-                                                            });
-                                                        };
-
-                                                        document.addEventListener('mousemove', handleMouseMove);
-                                                        document.addEventListener('mouseup', handleMouseUp);
+                                                        maxDuration = videoElement.duration;
+                                                        console.log(`[Resize] Shot ${index + 1} max duration: ${maxDuration}s`);
                                                     });
+
+                                                    // Load the video metadata
+                                                    videoElement.load();
+
+                                                    const handleMouseMove = (moveEvent: MouseEvent) => {
+                                                        const deltaX = moveEvent.clientX - startX;
+                                                        const deltaDuration = deltaX / pxPerSec;
+                                                        const newDuration = Math.max(1, Math.min(maxDuration, startDuration + deltaDuration));
+
+                                                        // Update shot duration in real-time
+                                                        const newShots = [...orderedShots];
+                                                        newShots[index] = { ...newShots[index], duration: newDuration };
+                                                        setOrderedShots(newShots);
+                                                    };
+
+                                                    const handleMouseUp = () => {
+                                                        document.removeEventListener('mousemove', handleMouseMove);
+                                                        document.removeEventListener('mouseup', handleMouseUp);
+                                                        setSnackbar({
+                                                            open: true,
+                                                            message: `镜头 ${index + 1} 时长已更新为 ${orderedShots[index].duration.toFixed(1)}s (最大: ${maxDuration.toFixed(1)}s)`,
+                                                            severity: 'success'
+                                                        });
+                                                    };
+
+                                                    document.addEventListener('mousemove', handleMouseMove);
+                                                    document.addEventListener('mouseup', handleMouseUp);
                                                 }}
                                             >
                                                 <Box sx={{ width: 2, height: 12, bgcolor: 'white', borderRadius: 1 }} />
