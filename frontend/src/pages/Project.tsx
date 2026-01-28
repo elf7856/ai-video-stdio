@@ -26,6 +26,7 @@ interface ProjectData {
     generatedVideos?: GeneratedVideo[];
     finalVideo?: string | null;
     status?: string;
+    progress?: number;
     logs?: Array<{ timestamp: string; level: string; message: string }>;
 }
 

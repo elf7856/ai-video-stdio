@@ -55,6 +55,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 }) => {
     const theme = useTheme();
 
+    // 本地状态用于拖动时的临时显示
+    const [localTime, setLocalTime] = React.useState<number | null>(null);
+
+    // 显示的时间：拖动时用本地值，否则用全局值
+    const displayTime = localTime !== null ? localTime : globalTime;
+
     return (
         <Box sx={{
             flex: 1,
@@ -135,12 +141,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     {/* Progress Bar */}
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
                         <Typography variant="caption" sx={{ minWidth: 40, color: 'white' }}>
-                            {formatTime(globalTime)}
+                            {formatTime(displayTime)}
                         </Typography>
                         <Slider
-                            value={globalTime}
+                            value={displayTime}
                             max={totalDuration || 100}
-                            onChange={onSeek}
+                            onChange={(_, value) => setLocalTime(value as number)}
+                            onChangeCommitted={(e, value) => {
+                                onSeek(e as Event, value);
+                                setLocalTime(null);
+                            }}
                             sx={{
                                 flex: 1,
                                 '& .MuiSlider-thumb': {

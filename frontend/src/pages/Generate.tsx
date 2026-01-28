@@ -53,7 +53,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { scriptsApi, videosApi } from '../api';
 import { getFullUrl } from '../utils/url';
-import heroVideo from '../assets/videos/hero.mp4';
 import type {
     ScriptGenerateRequest,
     ScriptGenerateResponse,
@@ -61,6 +60,7 @@ import type {
     VideoGenerationTask
 } from '../api/types';
 import ShotEditor from '../components/ShotEditor';
+import StoryboardEditor from '../components/StoryboardEditor';
 
 // Style Configuration
 const STYLE_CONFIG: Record<string, { icon: React.ReactNode; gradient: string; color: string }> = {
@@ -83,13 +83,17 @@ const GeneratePage: React.FC = () => {
 
     // --- State ---
     const [hasStarted, setHasStarted] = useState(false); // Controls Initial vs Studio view
-    const [activeTab, setActiveTab] = useState(0); // 0: Create, 1: Script, 2: Settings
+    const [activeTab, setActiveTab] = useState(0); // 0: Create, 1: Script, 2: Storyboard, 3: Logs
     const [topic, setTopic] = useState('');
     const [style, setStyle] = useState('专业');
     const [targetDuration, setTargetDuration] = useState(60);
     const [shotCount, setShotCount] = useState(6);
     const [estimatedDuration, setEstimatedDuration] = useState<number | null>(null);
     const [additionalRequirements, setAdditionalRequirements] = useState('');
+
+    // Generation mode
+    const [generationMode, setGenerationMode] = useState<'autopilot' | 'manual'>('manual');
+    const [showStoryboardEditor, setShowStoryboardEditor] = useState(false);
 
     const [loading, setLoading] = useState(false);
     const [scriptResult, setScriptResult] = useState<ScriptGenerateResponse | null>(null);
@@ -170,44 +174,9 @@ const GeneratePage: React.FC = () => {
 
     const handleGenerateVideo = async () => {
         if (!topic.trim()) return;
-        console.log("Starting video generation (DEV MODE: Bypass)...");
-        setHasStarted(true); // Switch to Studio Mode
+        console.log("Starting video generation...");
         setLoading(true);
         setError(null);
-        
-        // Mock Data for Editor
-        const mockTaskData = {
-            taskId: `dev_task_${Date.now()}`,
-            topic: topic,
-            style: style,
-            script: "This is a dev mode script.",
-            shots: Array.from({ length: shotCount }).map((_, i) => ({
-                sequence: i + 1,
-                prompt: `Shot ${i + 1} description`,
-                duration: 5,
-                shotType: 'medium shot'
-            })),
-            totalDuration: shotCount * 5,
-            status: 'completed',
-            generatedVideos: Array.from({ length: shotCount }).map((_, i) => ({
-                sequence: i + 1,
-                status: 'success',
-                videoPath: heroVideo // Use imported asset
-            }))
-        };
-
-        // Simulate delay then navigate
-        setTimeout(() => {
-            setLoading(false);
-            navigate('/project', { state: mockTaskData });
-        }, 1000);
-
-        /* ORIGINAL LOGIC COMMENTED OUT
-        setScriptResult(null);
-        setVideoTask(null);
-        setEditableShots([]);
-        
-        setIsEditingShots(false);
 
         try {
             console.log("Creating task...");
@@ -216,6 +185,7 @@ const GeneratePage: React.FC = () => {
                 style,
                 targetDuration,
                 shotCount,
+                generationMode,  // 添加生成模式
                 additionalRequirements: additionalRequirements.trim() || undefined,
                 enableNarration,
                 narrationVoice,
@@ -224,46 +194,87 @@ const GeneratePage: React.FC = () => {
             });
             console.log("Task created:", taskId);
 
-            const finalTask = await videosApi.pollTaskStatus(taskId, (task) => {
-                setVideoTask(task);
-                if (task.script && task.shots && task.shots.length > 0) {
-                    const totalDuration = task.shots.reduce((sum, s) => sum + s.duration, 0);
-                    setScriptResult({
-                        success: true,
-                        script: task.script,
-                        shots: task.shots,
-                        totalDuration
-                    });
-                    setEstimatedDuration(totalDuration);
-                    setEditableShots([...task.shots]);
+            // 🆕 立即跳转到 Project 页面，在那里实时显示生成进度
+            navigate(`/project/${taskId}`, {
+                state: {
+                    taskId,
+                    topic: topic.trim(),
+                    style,
+                    generationMode,
+                    isGenerating: true  // 标记正在生成
                 }
-            }, 600000);
+            });
 
-            console.log("Task polling finished:", finalTask);
-
-            // Double check: Ensure scriptResult is set from the final task
-            if (finalTask.script && finalTask.shots && (!scriptResult || !scriptResult.script)) {
-                 const totalDuration = finalTask.shots.reduce((sum, s) => sum + s.duration, 0);
-                 setScriptResult({
-                    success: true,
-                    script: finalTask.script,
-                    shots: finalTask.shots,
-                    totalDuration
-                 });
-                 setEstimatedDuration(totalDuration);
-                 setEditableShots([...finalTask.shots]);
-                 setVideoTask(finalTask);
-            }
-
-            setIsEditingShots(true);
-            setActiveTab(1); // Show script/shots
         } catch (err: any) {
             console.error("Generation error:", err);
-            setError(err.response?.data?.detail || err.message || 'Script generation failed');
-        } finally {
+            setError(err.response?.data?.detail || err.message || 'Video generation failed');
             setLoading(false);
         }
-        */
+    };
+
+    // 处理分镜图确认
+    const handleStoryboardConfirm = async (script: string, shots: Shot[]) => {
+        if (!videoTask) return;
+
+        setShowStoryboardEditor(false);
+        setVideoGenerating(true);
+        setActiveTab(4); // 切换到Logs标签
+        setError(null);
+
+        try {
+            await videosApi.confirmAndGenerate(
+                videoTask.taskId,
+                script,
+                shots
+            );
+
+            // 继续轮询
+            const finalTask = await videosApi.pollTaskStatus(videoTask.taskId, (task) => {
+                setVideoTask(task);
+            }, 600000);
+
+            // 完成后跳转
+            if (finalTask.status === 'completed') {
+                navigate('/project/' + videoTask.taskId, { state: finalTask });
+            }
+        } catch (err: any) {
+            console.error("Video generation error:", err);
+            setError(err.response?.data?.detail || err.message || 'Video generation failed');
+        } finally {
+            setVideoGenerating(false);
+        }
+    };
+
+    // 处理取消编辑
+    const handleStoryboardCancel = () => {
+        setShowStoryboardEditor(false);
+        setHasStarted(false);
+        setActiveTab(0);
+    };
+
+    // 处理重新生成单个镜头
+    const handleRegenerateShot = async (shotIndex: number, newPrompt?: string) => {
+        if (!videoTask || !editableShots[shotIndex]) return;
+
+        try {
+            // 调用重新生成API
+            await videosApi.regenerateShot(
+                videoTask.taskId,
+                editableShots[shotIndex].sequence,
+                newPrompt || editableShots[shotIndex].prompt,
+                editableShots[shotIndex].duration
+            );
+
+            // 重新加载任务数据
+            const updatedTask = await videosApi.getTaskStatus(videoTask.taskId);
+            setVideoTask(updatedTask);
+            if (updatedTask.shots) {
+                setEditableShots([...updatedTask.shots]);
+            }
+        } catch (error) {
+            console.error('Regenerate shot failed:', error);
+            throw error;
+        }
     };
 
     const handleConfirmAndGenerate = async () => {
@@ -272,7 +283,7 @@ const GeneratePage: React.FC = () => {
         setVideoGenerating(true);
         setIsEditingShots(false);
         setError(null);
-        setActiveTab(3); // Auto-switch to Logs
+        setActiveTab(4); // Auto-switch to Logs
 
         try {
             await videosApi.confirmAndGenerate(
@@ -508,6 +519,89 @@ const GeneratePage: React.FC = () => {
                             </Grid>
                         </Paper>
 
+                        {/* 生成模式选择 */}
+                        <Paper sx={{
+                            p: 3,
+                            mt: 3,
+                            background: 'rgba(255, 255, 255, 0.02)',
+                            backdropFilter: 'blur(20px)',
+                            border: '1px solid rgba(255, 255, 255, 0.05)',
+                            borderRadius: 3
+                        }}>
+                            <Typography variant="subtitle1" fontWeight={600} gutterBottom sx={{ color: 'white', mb: 2 }}>
+                                🎛️ 生成模式
+                            </Typography>
+                            <Grid container spacing={2}>
+                                {/* 人工确认模式 */}
+                                <Grid item xs={12} sm={6}>
+                                    <Paper
+                                        onClick={() => setGenerationMode('manual')}
+                                        sx={{
+                                            p: 3,
+                                            cursor: 'pointer',
+                                            border: `2px solid ${generationMode === 'manual' ? '#4facfe' : 'transparent'}`,
+                                            bgcolor: generationMode === 'manual' ? alpha('#4facfe', 0.15) : 'rgba(255, 255, 255, 0.03)',
+                                            borderRadius: 2,
+                                            transition: 'all 0.3s',
+                                            '&:hover': {
+                                                borderColor: '#4facfe',
+                                                bgcolor: alpha('#4facfe', 0.1)
+                                            }
+                                        }}
+                                    >
+                                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                                            <EditIcon sx={{ mr: 1, color: '#4facfe' }} />
+                                            <Typography variant="h6" fontWeight={600} sx={{ color: 'white' }}>
+                                                人工确认模式
+                                            </Typography>
+                                        </Box>
+                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                            生成分镜图后可编辑、重新生成，确认后才生成视频
+                                        </Typography>
+                                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                            <Chip label="精细控制" size="small" sx={{ bgcolor: 'rgba(79, 172, 254, 0.2)', color: '#4facfe' }} />
+                                            <Chip label="可编辑" size="small" sx={{ bgcolor: 'rgba(79, 172, 254, 0.2)', color: '#4facfe' }} />
+                                            <Chip label="成本优化" size="small" sx={{ bgcolor: 'rgba(79, 172, 254, 0.2)', color: '#4facfe' }} />
+                                        </Box>
+                                    </Paper>
+                                </Grid>
+
+                                {/* 托管模式 */}
+                                <Grid item xs={12} sm={6}>
+                                    <Paper
+                                        onClick={() => setGenerationMode('autopilot')}
+                                        sx={{
+                                            p: 3,
+                                            cursor: 'pointer',
+                                            border: `2px solid ${generationMode === 'autopilot' ? '#FF4081' : 'transparent'}`,
+                                            bgcolor: generationMode === 'autopilot' ? alpha('#FF4081', 0.15) : 'rgba(255, 255, 255, 0.03)',
+                                            borderRadius: 2,
+                                            transition: 'all 0.3s',
+                                            '&:hover': {
+                                                borderColor: '#FF4081',
+                                                bgcolor: alpha('#FF4081', 0.1)
+                                            }
+                                        }}
+                                    >
+                                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                                            <MagicIcon sx={{ mr: 1, color: '#FF4081' }} />
+                                            <Typography variant="h6" fontWeight={600} sx={{ color: 'white' }}>
+                                                托管模式
+                                            </Typography>
+                                        </Box>
+                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                            一键生成，全自动完成所有步骤，无需人工干预
+                                        </Typography>
+                                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                            <Chip label="快速" size="small" sx={{ bgcolor: 'rgba(255, 64, 129, 0.2)', color: '#FF4081' }} />
+                                            <Chip label="全自动" size="small" sx={{ bgcolor: 'rgba(255, 64, 129, 0.2)', color: '#FF4081' }} />
+                                            <Chip label="省心" size="small" sx={{ bgcolor: 'rgba(255, 64, 129, 0.2)', color: '#FF4081' }} />
+                                        </Box>
+                                    </Paper>
+                                </Grid>
+                            </Grid>
+                        </Paper>
+
                         <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 4 }}>
                             <Button 
                                 variant="contained" 
@@ -606,6 +700,7 @@ const GeneratePage: React.FC = () => {
                     >
                         <Tab label="Create" />
                         <Tab label="Script" disabled={!scriptResult} />
+                        <Tab label="Storyboard" disabled={!showStoryboardEditor} />
                         <Tab label="Settings" />
                         <Tab icon={<TerminalIcon fontSize="small" />} label="Logs" disabled={!videoTask} />
                     </Tabs>
@@ -778,7 +873,39 @@ const GeneratePage: React.FC = () => {
                             </motion.div>
                         )}
 
-                        {activeTab === 2 && (
+                        {/* Storyboard Tab */}
+                        {activeTab === 2 && showStoryboardEditor && videoTask && (
+                            <motion.div
+                                key="storyboard"
+                                initial={{ opacity: 0, x: -20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: 20 }}
+                                transition={{ duration: 0.2 }}
+                            >
+                                <StoryboardEditor
+                                    script={videoTask.script || ''}
+                                    shots={videoTask.shots || []}
+                                    onConfirm={handleStoryboardConfirm}
+                                    onCancel={handleStoryboardCancel}
+                                    onRegenerateShot={handleRegenerateShot}
+                                />
+                            </motion.div>
+                        )}
+
+                        {/* Storyboard Tab - Empty State */}
+                        {activeTab === 2 && !showStoryboardEditor && (
+                            <Box sx={{ textAlign: 'center', py: 10 }}>
+                                <MovieIcon sx={{ fontSize: 80, color: '#333', mb: 2 }} />
+                                <Typography variant="h6" color="text.secondary">
+                                    分镜图编辑器将在脚本和分镜图生成后显示
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                    在人工确认模式下，生成分镜图后会自动显示编辑器
+                                </Typography>
+                            </Box>
+                        )}
+
+                        {activeTab === 3 && (
                             <motion.div
                                 key="settings"
                                 initial={{ opacity: 0, x: -20 }}
@@ -852,7 +979,7 @@ const GeneratePage: React.FC = () => {
                             </motion.div>
                         )}
 
-                        {activeTab === 3 && videoTask && (
+                        {activeTab === 4 && videoTask && (
                             <motion.div
                                 key="logs"
                                 initial={{ opacity: 0, x: -20 }}
@@ -984,10 +1111,16 @@ const GeneratePage: React.FC = () => {
                                         Creating Magic
                                     </Typography>
                                     <Typography variant="body2" color="#888" sx={{ fontFamily: 'monospace', mt: 1 }}>
-                                        {videoTask?.logs && videoTask.logs.length > 0 
-                                            ? videoTask.logs[videoTask.logs.length - 1].message 
+                                        {videoTask?.logs && videoTask.logs.length > 0
+                                            ? videoTask.logs[videoTask.logs.length - 1].message
                                             : (loading ? 'Initializing director...' : 'Processing scenes...')}
                                     </Typography>
+                                    {/* Progress Percentage */}
+                                    {typeof videoTask?.progress === 'number' && (
+                                        <Typography variant="h4" fontWeight={600} color="#FF4081" sx={{ mt: 3 }}>
+                                            {Math.round(videoTask.progress)}%
+                                        </Typography>
+                                    )}
                                 </Box>
                             ) : (
                                 <Box sx={{ p: 4, maxWidth: 600, textAlign: 'center' }}>
@@ -1003,16 +1136,38 @@ const GeneratePage: React.FC = () => {
 
                             {/* Progress Bar Overlay */}
                             {(loading || videoGenerating) && (
-                                <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 4 }}>
+                                <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
                                     <LinearProgress
-                                        variant={videoTask?.progress ? "determinate" : "indeterminate"}
+                                        variant={typeof videoTask?.progress === 'number' ? "determinate" : "indeterminate"}
                                         value={videoTask?.progress || 0}
                                         sx={{
-                                            height: 4,
-                                            bgcolor: 'rgba(255,64,129,0.2)',
-                                            '& .MuiLinearProgress-bar': { bgcolor: '#FF4081' }
+                                            height: 8,
+                                            bgcolor: 'rgba(255,64,129,0.15)',
+                                            borderRadius: 0,
+                                            '& .MuiLinearProgress-bar': {
+                                                bgcolor: '#FF4081',
+                                                boxShadow: '0 0 10px rgba(255, 64, 129, 0.5)',
+                                                transition: 'transform 0.4s ease'
+                                            }
                                         }}
                                     />
+                                    {/* Progress Text on Bar */}
+                                    {typeof videoTask?.progress === 'number' && videoTask.progress > 0 && (
+                                        <Box sx={{
+                                            position: 'absolute',
+                                            top: -24,
+                                            right: 16,
+                                            bgcolor: 'rgba(0,0,0,0.8)',
+                                            px: 1.5,
+                                            py: 0.5,
+                                            borderRadius: 1,
+                                            backdropFilter: 'blur(10px)'
+                                        }}>
+                                            <Typography variant="caption" fontWeight={600} color="#FF4081" sx={{ fontFamily: 'monospace' }}>
+                                                {Math.round(videoTask.progress)}%
+                                            </Typography>
+                                        </Box>
+                                    )}
                                 </Box>
                             )}
                         </Paper>
