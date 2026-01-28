@@ -8,9 +8,10 @@ import Sidebar from './components/Sidebar';
 import HomePage from './pages/Home';
 import TemplatesPage from './pages/Templates';
 import ContentPage from './pages/Content';
-import Studio from './pages/Studio';
 import GeneratePage from './pages/Generate';
 import TeamPage from './pages/Team';
+import ProjectPage from './pages/Project';
+import ImageGeneratePage from './pages/ImageGenerate';
 
 const App: React.FC = () => {
     const [isSidebarOpen, setSidebarOpen] = useState(true);
@@ -19,9 +20,8 @@ const App: React.FC = () => {
     console.log('[App] Current location:', location.pathname);
 
     // 全屏页面（无侧边栏）
-    const isFullScreenPage = location.pathname.startsWith('/generate') || 
-                             location.pathname.startsWith('/editor') || 
-                             location.pathname.startsWith('/studio') ||
+    const isFullScreenPage = location.pathname.startsWith('/generate') ||
+                             location.pathname.startsWith('/project') ||
                              location.pathname === '/' ||
                              location.pathname === '/team';
 
@@ -44,9 +44,9 @@ const App: React.FC = () => {
                     <Routes>
                         <Route path="/" element={<HomePage />} />
                         <Route path="/generate" element={<GeneratePage />} />
-                        <Route path="/editor" element={<Studio />} />
-                        <Route path="/editor/:projectId" element={<Studio />} />
-                        <Route path="/studio" element={<Studio />} />
+                        <Route path="/project" element={<ProjectPage />} />
+                        <Route path="/project/:projectId" element={<ProjectPage />} />
+                        <Route path="/team" element={<TeamPage />} />
                     </Routes>
                 </Box>
             </Box>
@@ -65,12 +65,9 @@ const App: React.FC = () => {
                 sx={{ flexGrow: 1, paddingTop: '64px' }}
             >
                 <Routes>
-                    <Route path="/" element={<HomePage />} />
                     <Route path="/templates" element={<TemplatesPage />} />
                     <Route path="/content" element={<ContentPage />} />
-                    <Route path="/team" element={<TeamPage />} />
-                    {/* Fallback for editor routes if isStudioPage check fails or during transition */}
-                    <Route path="/editor/*" element={<Studio />} />
+                    <Route path="/images" element={<ImageGeneratePage />} />
                 </Routes>
             </Box>
         </Box>

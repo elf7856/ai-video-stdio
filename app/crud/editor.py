@@ -46,11 +46,15 @@ class EditorProjectCRUD:
     def list(
         db: Session,
         status: Optional[str] = None,
+        user_id: Optional[str] = None,
         limit: int = 20,
         offset: int = 0
     ) -> List[EditorProject]:
         """获取项目列表"""
         query = db.query(EditorProjectDB)
+
+        if user_id:
+            query = query.filter(EditorProjectDB.created_by == user_id)
 
         if status:
             query = query.filter(EditorProjectDB.status == status)

@@ -53,6 +53,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { scriptsApi, videosApi } from '../api';
 import { getFullUrl } from '../utils/url';
+import heroVideo from '../assets/videos/hero.mp4';
 import type {
     ScriptGenerateRequest,
     ScriptGenerateResponse,
@@ -169,12 +170,39 @@ const GeneratePage: React.FC = () => {
 
     const handleGenerateVideo = async () => {
         if (!topic.trim()) return;
-        console.log("Starting video generation...");
+        console.log("Starting video generation (DEV MODE: Bypass)...");
         setHasStarted(true); // Switch to Studio Mode
         setLoading(true);
         setError(null);
         
-        // 【关键修复】彻底清空旧状态，防止闪现旧内容
+        // Mock Data for Editor
+        const mockTaskData = {
+            taskId: `dev_task_${Date.now()}`,
+            topic: topic,
+            style: style,
+            script: "This is a dev mode script.",
+            shots: Array.from({ length: shotCount }).map((_, i) => ({
+                sequence: i + 1,
+                prompt: `Shot ${i + 1} description`,
+                duration: 5,
+                shotType: 'medium shot'
+            })),
+            totalDuration: shotCount * 5,
+            status: 'completed',
+            generatedVideos: Array.from({ length: shotCount }).map((_, i) => ({
+                sequence: i + 1,
+                status: 'success',
+                videoPath: heroVideo // Use imported asset
+            }))
+        };
+
+        // Simulate delay then navigate
+        setTimeout(() => {
+            setLoading(false);
+            navigate('/project', { state: mockTaskData });
+        }, 1000);
+
+        /* ORIGINAL LOGIC COMMENTED OUT
         setScriptResult(null);
         setVideoTask(null);
         setEditableShots([]);
@@ -235,6 +263,7 @@ const GeneratePage: React.FC = () => {
         } finally {
             setLoading(false);
         }
+        */
     };
 
     const handleConfirmAndGenerate = async () => {

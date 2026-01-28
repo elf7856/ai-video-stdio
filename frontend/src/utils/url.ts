@@ -7,6 +7,7 @@ import apiClient from '../api/client';
 export const getFullUrl = (path?: string): string => {
   if (!path) return '';
   if (path.startsWith('http')) return path;
+  if (path.startsWith('/assets/') || path.startsWith('assets/')) return path; // Frontend asset
   
   const baseUrl = apiClient.defaults.baseURL?.replace(/\/$/, '') || 'http://localhost:8000';
   

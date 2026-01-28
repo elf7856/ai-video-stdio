@@ -335,7 +335,15 @@ class VideoGenerationOrchestrator:
             pid = f"proj_{state.task_id}"
             project = db.query(EditorProjectDB).filter(EditorProjectDB.id == pid).first()
             if not project:
-                project = EditorProjectDB(id=pid, name=state.config.topic if state.config else "Video", status=ProjectStatusEnum.DRAFT, created_at=datetime.utcnow())
+                # Ensure user_id is passed as string if it exists
+                user_id_str = str(state.user_id) if state.user_id else None
+                project = EditorProjectDB(
+                    id=pid, 
+                    name=state.config.topic if state.config else "Video", 
+                    status=ProjectStatusEnum.DRAFT, 
+                    created_at=datetime.utcnow(),
+                    created_by=user_id_str  # Persist User ID
+                )
                 db.add(project)
             if state.status == TaskStatus.COMPLETED:
                 project.status = ProjectStatusEnum.COMPLETED
