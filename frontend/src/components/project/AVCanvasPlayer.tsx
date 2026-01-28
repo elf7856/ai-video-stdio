@@ -8,7 +8,7 @@
  * - 音量控制
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import { Box, Typography, IconButton, Slider, Stack, Chip, alpha, useTheme, CircularProgress } from '@mui/material';
 import { PlayArrow as PlayIcon, Pause as PauseIcon, VolumeUp as VolumeIcon, VolumeOff as MuteIcon } from '@mui/icons-material';
 import { useAVCanvas } from '../../hooks/useAVCanvas';
@@ -60,8 +60,7 @@ export const AVCanvasPlayer: React.FC<AVCanvasPlayerProps> = ({
         handlePlayPause,
         handleSeek,
         handleVolumeChange,
-        toggleMute,
-        previewFrame
+        toggleMute
     } = useAVCanvas({ orderedShots, containerRef });
 
     // Notify parent of time updates

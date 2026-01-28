@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
     Box, Button, Stack, IconButton, Snackbar, Alert,
-    Dialog, DialogTitle, DialogContent, DialogActions, TextField, Slider, Typography,
-    LinearProgress, CircularProgress, Paper
+    Dialog, DialogTitle, DialogContent, DialogActions, TextField, Slider, Typography
 } from '@mui/material';
-import { ArrowBack as BackIcon, Save as SaveIcon, CheckCircle as CheckIcon, Error as ErrorIcon } from '@mui/icons-material';
+import { ArrowBack as BackIcon, Save as SaveIcon } from '@mui/icons-material';
 import { useLocation, useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { AVCanvasPlayer } from '../components/project/AVCanvasPlayer';
-import { AVCanvasPlayerDebug } from '../components/project/AVCanvasPlayerDebug';
-import { Timeline } from '../components/project/Timeline';
 import { MultiTrackTimeline } from '../components/project/MultiTrackTimeline';
 import { ShotList } from '../components/project/ShotList';
 import { ScriptPanel } from '../components/project/ScriptPanel';
@@ -35,33 +32,16 @@ interface ProjectData {
 // Layout Constants
 const HEADER_HEIGHT = 50;
 
-// 状态文本映射
-const getStatusText = (status: string): string => {
-    const statusMap: Record<string, string> = {
-        'pending': '准备中...',
-        'generating_script': '正在生成脚本...',
-        'generating_videos': '正在生成视频片段...',
-        'checking_quality': '正在检查质量...',
-        'merging_videos': '正在合并视频...',
-        'completed': '生成完成',
-        'failed': '生成失败',
-        'cancelled': '已取消'
-    };
-    return statusMap[status] || status;
-};
-
 const ProjectPage: React.FC = () => {
     const location = useLocation();
     const { projectId } = useParams();
     const navigate = useNavigate();
-    const timelineRef = React.useRef<HTMLDivElement>(null);
 
     // State Management
     const [activeTab, setActiveTab] = useState(0);
     const [projectData, setProjectData] = useState<ProjectData | null>(null);
     const [orderedShots, setOrderedShots] = useState<ShotWithVideo[]>([]);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
 
     // Playback State (synced with AVCanvasPlayer)
     const [currentShotIndex, setCurrentShotIndex] = useState(0);
@@ -70,7 +50,6 @@ const ProjectPage: React.FC = () => {
     const [totalDuration, setTotalDuration] = useState(0);
 
     // Timeline State
-    const [pxPerSec, setPxPerSec] = useState(40);
     const [externalSeekTime, setExternalSeekTime] = useState<number | null>(null);
 
     // Editing State
@@ -99,7 +78,7 @@ const ProjectPage: React.FC = () => {
     };
 
     // Handle seek from Timeline
-    const handleSeek = (time: number, shouldResume?: boolean) => {
+    const handleSeek = (time: number) => {
         setExternalSeekTime(time);
         // Reset after a short delay to allow re-seeking to the same time
         setTimeout(() => setExternalSeekTime(null), 100);
@@ -164,7 +143,12 @@ const ProjectPage: React.FC = () => {
 
             } catch (err: any) {
                 console.error('[Project] Load error:', err);
-                setError(err.message || 'Failed to load project data');
+                // Show error in snackbar instead
+                setSnackbar({
+                    open: true,
+                    message: err.message || 'Failed to load project data',
+                    severity: 'error'
+                });
             } finally {
                 setLoading(false);
             }
@@ -420,7 +404,6 @@ const ProjectPage: React.FC = () => {
     }
 
     const currentShot = orderedShots[currentShotIndex];
-    const isGenerating = projectData?.status && ['pending', 'generating_script', 'generating_videos', 'checking_quality', 'merging_videos'].includes(projectData.status);
 
     return (
         <Box

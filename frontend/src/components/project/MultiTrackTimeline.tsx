@@ -281,7 +281,6 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                                     startOffset={startOffset}
                                     pxPerSec={pxPerSec}
                                     isSelected={isSelected}
-                                    onSeek={onSeek}
                                     onShotDurationChange={onShotDurationChange}
                                 />
                             );
@@ -376,7 +375,6 @@ interface VideoClipProps {
     startOffset: number;
     pxPerSec: number;
     isSelected: boolean;
-    onSeek: (time: number, shouldResume?: boolean) => void;
     onShotDurationChange?: (index: number, newDuration: number) => void;
 }
 
@@ -386,7 +384,6 @@ const VideoClip: React.FC<VideoClipProps> = ({
     startOffset,
     pxPerSec,
     isSelected,
-    onSeek,
     onShotDurationChange
 }) => {
     const [thumbnails, setThumbnails] = useState<string[]>([]);

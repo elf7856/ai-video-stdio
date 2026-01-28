@@ -294,8 +294,8 @@ export const useAVCanvas = ({ orderedShots, containerRef }: UseAVCanvasProps) =>
                         // 再次确认位置
                         avCanvasRef.current.previewFrame(time * 1e6).then(() => {
                             if (avCanvasRef.current) {
-                                // 从当前位置开始播放（不指定 start）
-                                avCanvasRef.current.play();
+                                // 从当前位置开始播放
+                                avCanvasRef.current.play({ start: time * 1e6 });
                                 setIsPlaying(true);
                             }
                         });
