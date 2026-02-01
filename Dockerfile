@@ -28,12 +28,13 @@ RUN mkdir -p uploads outputs
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# 暴露端口
-EXPOSE 8000
+# Railway 会自动设置 PORT 环境变量
+# 暴露端口（Railway 会使用 $PORT）
+EXPOSE ${PORT:-8000}
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-# 启动命令
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# 启动命令 - 使用 Railway 的 PORT 环境变量
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} 
