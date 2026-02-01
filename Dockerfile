@@ -53,9 +53,9 @@ ENV PYTHONUNBUFFERED=1
 # 暴露端口（Railway 会自动设置 PORT）
 EXPOSE ${PORT:-8000}
 
-# 健康检查
+# 健康检查（使用 shell 来正确展开环境变量）
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
+    CMD sh -c 'curl -f http://localhost:${PORT:-8000}/health || exit 1'
 
 # 启动命令
 CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
