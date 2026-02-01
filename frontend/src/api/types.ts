@@ -95,6 +95,7 @@ export interface VideoGenerationRequest {
   style: string;
   targetDuration?: number;  // 可选，不传则自动计算
   shotCount?: number;       // 新增：镜头数量
+  generationMode?: 'autopilot' | 'manual';  // 生成模式
   additionalRequirements?: string;
   autoGenerate?: boolean;
   // 新增：旁白/配音相关
