@@ -376,28 +376,47 @@ class LocalGenerator(ImageGeneratorBase):
             raise Exception(f"本地生成失败: {str(e)}")
 
 class ImageGenerator:
-    """统一的图像生成器"""
-    
+    """统一的图像生成器（使用懒加载优化启动时间）"""
+
     def __init__(self, provider: str = None):
         self.provider = provider or settings.default_image_provider
         self.llm_service = llm_service
-        self.generators = {
-            'google_imagen': GoogleImagenAdapter(),
-            'stability': StabilityGenerator(),
-            'replicate': ReplicateGenerator(),
-            'leonardo': LeonardoGenerator(),
-            'midjourney': MidjourneyGenerator(),
-            'local': LocalGenerator()
+        # 使用懒加载：不在初始化时创建生成器实例
+        self._generators = {}
+        self._generator_classes = {
+            'google_imagen': GoogleImagenAdapter,
+            'stability': StabilityGenerator,
+            'replicate': ReplicateGenerator,
+            'leonardo': LeonardoGenerator,
+            'midjourney': MidjourneyGenerator,
+            'local': LocalGenerator
         }
-        self.current_generator = self.generators.get(self.provider)
-        
-        if not self.current_generator or not self.current_generator.is_available():
-            # 尝试其他可用的生成器
-            for name, generator in self.generators.items():
-                if generator.is_available():
+        self.current_generator = None
+
+    def _get_generator(self, name: str):
+        """懒加载：只在需要时创建生成器实例"""
+        if name not in self._generators:
+            generator_class = self._generator_classes.get(name)
+            if generator_class:
+                self._generators[name] = generator_class()
+        return self._generators.get(name)
+
+    def _ensure_current_generator(self):
+        """确保有可用的当前生成器"""
+        if self.current_generator is None:
+            # 首先尝试默认提供商
+            generator = self._get_generator(self.provider)
+            if generator and generator.is_available():
+                self.current_generator = generator
+                return
+
+            # 如果默认不可用，尝试其他可用的生成器
+            for name in self._generator_classes.keys():
+                generator = self._get_generator(name)
+                if generator and generator.is_available():
                     self.provider = name
                     self.current_generator = generator
-                    break
+                    return
     
     async def generate_image_description(self, content_requirement: str, 
                                        style_requirement: str = "realistic",
@@ -433,17 +452,18 @@ class ImageGenerator:
     async def generate_image(self, prompt: str, negative_prompt: str = None,
                            size: Tuple[int, int] = None, provider: str = None,
                            **kwargs) -> str:
-        """生成图像"""
+        """生成图像（使用懒加载）"""
         if provider and provider != self.provider:
-            generator = self.generators.get(provider)
+            generator = self._get_generator(provider)
             if not generator or not generator.is_available():
                 raise Exception(f"指定的生成器 {provider} 不可用")
         else:
+            self._ensure_current_generator()
             generator = self.current_generator
-        
+
         if not generator:
             raise Exception("没有可用的图像生成器")
-        
+
         try:
             return await generator.generate_image(
                 prompt=prompt,
@@ -453,18 +473,20 @@ class ImageGenerator:
             )
         except Exception as e:
             # 如果当前生成器失败，尝试其他可用的生成器
-            for name, alt_generator in self.generators.items():
-                if name != self.provider and alt_generator.is_available():
-                    try:
-                        return await alt_generator.generate_image(
-                            prompt=prompt,
-                            negative_prompt=negative_prompt,
-                            size=size,
-                            **kwargs
-                        )
-                    except:
-                        continue
-            
+            for name in self._generator_classes.keys():
+                if name != self.provider:
+                    alt_generator = self._get_generator(name)
+                    if alt_generator and alt_generator.is_available():
+                        try:
+                            return await alt_generator.generate_image(
+                                prompt=prompt,
+                                negative_prompt=negative_prompt,
+                                size=size,
+                                **kwargs
+                            )
+                        except:
+                            continue
+
             raise e
     
     async def generate_image_with_description(self, content_requirement: str,
