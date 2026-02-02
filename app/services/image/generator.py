@@ -5,8 +5,6 @@ import aiohttp
 import base64
 from typing import Dict, Optional, Tuple, List, Union
 from PIL import Image
-import torch
-from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from app.core.config import settings
 from app.prompts.base import render_prompt
 import litellm
@@ -15,6 +13,14 @@ import time
 from abc import ABC, abstractmethod
 from app.services.llm.service import llm_service
 from app.services.image.google_imagen_generator import GoogleImagenGenerator
+
+# 条件导入重量级依赖（仅在使用本地生成器时需要）
+try:
+    import torch
+    from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 
 class ImageGeneratorBase(ABC):
     """图像生成器基类"""
@@ -297,32 +303,42 @@ class MidjourneyGenerator(ImageGeneratorBase):
             raise Exception(f"Midjourney生成失败: {str(e)}")
 
 class LocalGenerator(ImageGeneratorBase):
-    """本地Stable Diffusion生成器"""
-    
+    """本地Stable Diffusion生成器（需要 torch 和 diffusers）"""
+
     def __init__(self, model_name: str = None):
         self.model_name = model_name or settings.default_image_model
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = None
         self.pipeline = None
-        self._load_model()
-    
+
+        if TORCH_AVAILABLE:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self._load_model()
+
+    def is_available(self) -> bool:
+        """检查本地生成器是否可用"""
+        return TORCH_AVAILABLE and self.pipeline is not None
+
     def _load_model(self):
         """加载图像生成模型"""
+        if not TORCH_AVAILABLE:
+            return
+
         try:
             self.pipeline = StableDiffusionPipeline.from_pretrained(
                 self.model_name,
                 torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
                 safety_checker=None
             )
-            
+
             # 使用更快的调度器
             self.pipeline.scheduler = DPMSolverMultistepScheduler.from_config(
                 self.pipeline.scheduler.config
             )
-            
+
             if self.device == "cuda":
                 self.pipeline = self.pipeline.to(self.device)
                 self.pipeline.enable_attention_slicing()
-            
+
         except Exception as e:
             logger.error(f"模型加载失败: {str(e)}", exc_info=True)
             self.pipeline = None

@@ -20,8 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ============================================
 FROM base as builder
 
-# 复制 requirements 文件
-COPY requirements.txt requirements.txt
+# 复制 requirements 文件（使用最小化版本）
+COPY requirements.minimal.txt requirements.txt
 
 # 安装 Python 依赖
 RUN pip install --no-cache-dir --user -r requirements.txt

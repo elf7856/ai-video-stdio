@@ -1,0 +1,73 @@
+# ============================================
+# 最小化 Requirements - Railway 生产部署
+# ============================================
+# 目标镜像大小：< 1 GB
+# ============================================
+
+# Core Web Framework
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+pydantic-settings>=2.0.0
+pydantic>=2.5.0
+
+# HTTP Client
+httpx[socks]>=0.23.1
+
+# LLM and AI (API-based, no local models)
+litellm>=1.70.0
+google-genai>=0.1.0
+
+# 轻量级视频处理（仅使用 ffmpeg CLI）
+ffmpeg-python>=0.2.0
+
+# 视频下载
+yt-dlp>=2023.12.30
+
+# 基础图像处理（无 ML 模型）
+Pillow>=10.0.0
+
+# TTS（云服务）
+edge-tts>=6.1.9
+elevenlabs>=0.2.26
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+
+# Utilities
+rich>=13.7.0
+aiofiles>=23.2.0
+Jinja2>=3.0.0
+
+# API clients（使用外部服务代替本地模型）
+replicate>=0.22.0
+stability-sdk>=0.8.0
+
+# Google APIs
+google-api-python-client>=2.108.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+
+# ============================================
+# 移除的重量级依赖（总计约 5-7 GB）：
+# ============================================
+# ❌ torch>=2.0.0 (2-3 GB)
+# ❌ transformers>=4.35.0 (1-2 GB)
+# ❌ diffusers>=0.24.0 (500 MB)
+# ❌ openai-whisper>=20231117 (500 MB-1 GB)
+# ❌ opencv-python>=4.8.0 (200-500 MB)
+# ❌ moviepy>=1.0.3 (200 MB)
+# ❌ librosa>=0.10.1 (200 MB)
+# ❌ google-cloud-speech>=2.21.0 (100 MB)
+# ❌ SpeechRecognition>=3.10.0 (50 MB)
+# ❌ pytube>=15.0.0 (已被 yt-dlp 替代)
+# ❌ pydub>=0.25.1 (可选，用 ffmpeg 替代)
+#
+# 替代方案：
+# - 视频处理：使用 ffmpeg CLI（已安装在系统中）
+# - 图像生成：使用 Replicate/Stability AI API
+# - 语音识别：使用 Google Cloud Speech API
+# - 音频处理：使用 ffmpeg CLI
+# ============================================
