@@ -18,7 +18,11 @@ from app.services.llm.service import LLMService, ProviderType
 from app.services.video_generation.base_client import VideoGenerationRequest
 from app.services.video_generation.google_robust_client import RobustGoogleVideoClient
 from app.services.image.google_imagen_generator import GoogleImagenGenerator
-from app.services.video.processor import VideoProcessor
+# 使用轻量级处理器（基于 ffmpeg，不需要 cv2/moviepy）
+try:
+    from app.services.video.processor_lite import VideoProcessor
+except ImportError:
+    from app.services.video.processor import VideoProcessor
 from app.services.audio.tts_service import TTSService
 from app.services.timing.allocator import TimingAllocator
 from app.prompts.video_generation import ScriptGenerationPrompt

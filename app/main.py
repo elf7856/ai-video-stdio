@@ -10,7 +10,11 @@ from app import dependencies
 
 # 导入所有需要实例化的服务
 from app.services.video.downloader import VideoDownloader
-from app.services.video.processor import VideoProcessor
+# 使用轻量级处理器（基于 ffmpeg，不需要 cv2/moviepy）
+try:
+    from app.services.video.processor_lite import VideoProcessor
+except ImportError:
+    from app.services.video.processor import VideoProcessor
 from app.services.llm.analyzer import VideoAnalyzer
 from app.services.image.generator import ImageServiceManager
 from app.services.tts.generator import TTSGenerator
