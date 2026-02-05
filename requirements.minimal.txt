@@ -24,6 +24,7 @@ ffmpeg-python>=0.2.0
 
 # 视频下载
 yt-dlp>=2023.12.30
+pytube>=15.0.0
 
 # 基础图像处理（无 ML 模型）
 Pillow>=10.0.0
