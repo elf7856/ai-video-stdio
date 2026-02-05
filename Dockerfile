@@ -50,5 +50,5 @@ ENV PYTHONUNBUFFERED=1
 # 暴露端口（Railway 会自动设置 PORT）
 EXPOSE ${PORT:-8000}
 
-# 启动命令
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# 启动命令（使用 shell 形式以正确展开环境变量）
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
