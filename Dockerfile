@@ -8,10 +8,11 @@ FROM python:3.12-slim as base
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖
+# 安装系统依赖（包括 bash）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
+    bash \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
