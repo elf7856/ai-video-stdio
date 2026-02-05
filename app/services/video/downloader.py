@@ -6,7 +6,6 @@ import re
 from typing import Optional, Dict, Tuple
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
-from pytube import YouTube
 from app.core.config import settings
 
 class VideoDownloader:
