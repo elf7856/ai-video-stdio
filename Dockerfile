@@ -40,6 +40,9 @@ ENV PATH=/root/.local/bin:$PATH
 # 复制项目文件
 COPY . .
 
+# 给启动脚本添加执行权限
+RUN chmod +x start.sh
+
 # 创建必要的目录
 RUN mkdir -p uploads outputs
 
@@ -50,5 +53,5 @@ ENV PYTHONUNBUFFERED=1
 # 暴露端口（Railway 会自动设置 PORT）
 EXPOSE ${PORT:-8000}
 
-# 启动命令（使用 shell 形式以正确展开环境变量）
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# 启动命令（使用启动脚本）
+CMD ["./start.sh"]
