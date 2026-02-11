@@ -64,12 +64,25 @@ app.add_middleware(
 # 添加自定义中间件为静态文件添加 CORS 头
 class StaticFilesCORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # 处理 OPTIONS 预检请求
+        if request.method == "OPTIONS" and request.url.path.startswith(("/outputs", "/uploads")):
+            return Response(
+                status_code=200,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                    "Access-Control-Allow-Headers": "*",
+                    "Access-Control-Max-Age": "86400",  # 24小时缓存
+                }
+            )
+
         response = await call_next(request)
         # 为 /outputs 和 /uploads 路径添加 CORS 头
         if request.url.path.startswith(("/outputs", "/uploads")):
             response.headers["Access-Control-Allow-Origin"] = "*"
             response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Range"
         return response
 
 app.add_middleware(StaticFilesCORSMiddleware)
