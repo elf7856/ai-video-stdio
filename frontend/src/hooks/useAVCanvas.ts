@@ -159,7 +159,11 @@ export const useAVCanvas = ({ orderedShots, containerRef }: UseAVCanvasProps) =>
 
                     try {
                         // 获取视频流
-                        const response = await fetch(fullUrl);
+                        const response = await fetch(fullUrl, {
+                            mode: 'cors',
+                            cache: 'no-cache',
+                            credentials: 'omit'
+                        });
                         if (!response.ok) {
                             throw new Error(`Failed to fetch: ${response.statusText}`);
                         }

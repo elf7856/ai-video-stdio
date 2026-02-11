@@ -636,7 +636,11 @@ const AudioClip: React.FC<AudioClipProps> = ({
 
             try {
                 const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-                const response = await fetch(getFullUrl(shot.videoData!.videoPath));
+                const response = await fetch(getFullUrl(shot.videoData!.videoPath), {
+                    mode: 'cors',
+                    cache: 'no-cache',
+                    credentials: 'omit'
+                });
                 const arrayBuffer = await response.arrayBuffer();
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
