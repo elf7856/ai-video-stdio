@@ -13,12 +13,14 @@ export interface ScriptGenerateRequest {
 }
 
 export interface Shot {
-  sequence: number;           // 镜头序号
-  prompt: string;             // 镜头描述/提示词
-  duration: number;           // 时长（秒）
+  sequence: number;           // 镜头序号（必须从1开始连续）
+  prompt: string;             // 镜头描述/提示词（10-1000字符）
+  duration: number;           // 时长（秒，0-8.0秒）
   shotType?: string;          // 镜头类型
-  imagePath?: string;         // 新增：分镜图路径
-  videoPath?: string;         // 新增：生成视频路径
+  imagePath?: string;         // 分镜图路径
+  videoPath?: string;         // 生成视频路径
+  status?: string;            // 状态
+  qualityScore?: number;      // 质量分数（0-1）
 }
 
 export interface ScriptGenerateResponse {
@@ -90,14 +92,31 @@ export interface PromptOptimizeResponse {
 
 // ========== 视频生成相关类型 ==========
 
+// 视频风格枚举
+export type VideoStyle =
+  | '专业'
+  | '电影感'
+  | '纪录片'
+  | '商业广告'
+  | '社交媒体'
+  | '教育'
+  | '娱乐';
+
+// 旁白声音枚举
+export type NarrationVoice =
+  | 'chinese_female'
+  | 'chinese_male'
+  | 'english_female'
+  | 'english_male';
+
 export interface VideoGenerationRequest {
-  topic: string;
-  style: string;
-  targetDuration?: number;  // 可选，不传则自动计算
-  shotCount?: number;       // 新增：镜头数量
-  generationMode?: 'autopilot' | 'manual';  // 生成模式
-  additionalRequirements?: string;
-  autoGenerate?: boolean;
+  topic: string;                    // 视频主题，2-200字符
+  style: VideoStyle;                // 视频风格
+  targetDuration?: number;          // 目标时长（秒），15-180秒之间
+  shotCount?: number;               // 镜头数量，3-12个之间
+  enableNarration?: boolean;        // 是否启用旁白
+  narrationVoice?: NarrationVoice;  // 旁白声音
+}
   // 新增：旁白/配音相关
   enableNarration?: boolean;
   narrationVoice?: string;

@@ -25,9 +25,15 @@ except ImportError:
     from app.services.video.processor import VideoProcessor
 from app.services.audio.tts_service import TTSService
 from app.services.timing.allocator import TimingAllocator
-from app.prompts.video_generation import ScriptGenerationPrompt
 from app.services.storage import get_storage_service
 from app.core.config import settings
+
+# 导入新的解析器和配置
+from app.services.video_generation.llm_response_parser import (
+    LLMResponseParser,
+    ScriptGenerationResponse
+)
+from app.config.prompts import VideoScriptPrompts, PromptConfig
 
 # 导入质量检查服务
 try:
@@ -201,13 +207,58 @@ class VideoGenerationOrchestrator:
         try:
             # 1. 脚本生成
             state.add_log("🎬 正在构思脚本...")
-            prompt = ScriptGenerationPrompt.build(topic=config.topic, shot_count=config.shot_count)
-            res = await asyncio.to_thread(self.llm.call, messages=[{"role": "user", "content": prompt}])
-            import re
-            json_match = re.search(r'```json\s*(.*?)\s*```', res["content"], re.DOTALL)
-            data = json.loads(json_match.group(1) if json_match else res["content"].strip())
-            state.script = data["script"]
-            state.shots = [ShotInfo(sequence=i+1, prompt=s["prompt"], duration=s.get("duration", 6)) for i, s in enumerate(data["shots"][:config.shot_count])]
+
+            # 使用新的 prompt 构建器
+            prompt = VideoScriptPrompts.build_prompt(
+                topic=config.topic,
+                style=config.style,
+                target_duration=config.target_duration,
+                shot_count=config.shot_count
+            )
+
+            # 调用 LLM
+            res = await asyncio.to_thread(
+                self.llm.call,
+                messages=[{"role": "user", "content": prompt}],
+                timeout=PromptConfig.TIMEOUT
+            )
+
+            # 使用新的解析器
+            parsed_response = LLMResponseParser.parse_script_generation_response(
+                llm_response=res["content"],
+                fallback_shot_count=config.shot_count or 6
+            )
+
+            if not parsed_response:
+                # 解析失败，使用降级方案
+                logger.warning("LLM 响应解析失败，使用降级方案")
+                if PromptConfig.ENABLE_FALLBACK:
+                    parsed_response = LLMResponseParser.create_fallback_response(
+                        topic=config.topic,
+                        shot_count=config.shot_count or 6,
+                        target_duration=config.target_duration or 60
+                    )
+                else:
+                    raise ValueError("LLM 响应解析失败且未启用降级方案")
+
+            # 提取数据
+            state.script = parsed_response.script
+
+            # 根据配置限制镜头数量
+            shots_to_use = parsed_response.shots
+            if config.shot_count:
+                shots_to_use = parsed_response.shots[:config.shot_count]
+
+            state.shots = [
+                ShotInfo(
+                    sequence=shot.sequence,
+                    prompt=shot.prompt,
+                    duration=shot.duration,
+                    shot_type=shot.shotType
+                )
+                for shot in shots_to_use
+            ]
+
             state.status = TaskStatus.GENERATING_SCRIPT
             self._save_task_state(state)
 

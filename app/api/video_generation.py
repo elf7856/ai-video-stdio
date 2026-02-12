@@ -3,9 +3,10 @@
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, validator
+from typing import List, Optional, Dict, Any, Literal
 from sqlalchemy.orm import Session
+from enum import Enum
 import logging
 import uuid
 from pathlib import Path
@@ -23,18 +24,76 @@ from app.api.deps import get_current_user_optional
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/video-generation", tags=["视频生成"])
 
+# 视频风格枚举
+class VideoStyle(str, Enum):
+    PROFESSIONAL = "专业"
+    CINEMATIC = "电影感"
+    DOCUMENTARY = "纪录片"
+    COMMERCIAL = "商业广告"
+    SOCIAL_MEDIA = "社交媒体"
+    EDUCATIONAL = "教育"
+    ENTERTAINMENT = "娱乐"
+
+# 旁白声音枚举
+class NarrationVoice(str, Enum):
+    CHINESE_FEMALE = "chinese_female"
+    CHINESE_MALE = "chinese_male"
+    ENGLISH_FEMALE = "english_female"
+    ENGLISH_MALE = "english_male"
+
 class VideoGenerationRequest(BaseModel):
-    topic: str
-    style: str = "专业"
-    targetDuration: Optional[int] = 60
-    shotCount: Optional[int] = 6
-    enableNarration: bool = False
-    narrationVoice: str = "chinese_female"
+    topic: str = Field(..., min_length=2, max_length=200, description="视频主题")
+    style: VideoStyle = Field(default=VideoStyle.PROFESSIONAL, description="视频风格")
+    targetDuration: Optional[int] = Field(
+        default=60,
+        ge=15,
+        le=180,
+        description="目标时长（秒），15-180秒之间"
+    )
+    shotCount: Optional[int] = Field(
+        default=6,
+        ge=3,
+        le=12,
+        description="镜头数量，3-12个之间"
+    )
+    enableNarration: bool = Field(default=False, description="是否启用旁白")
+    narrationVoice: NarrationVoice = Field(
+        default=NarrationVoice.CHINESE_FEMALE,
+        description="旁白声音"
+    )
+
+    @validator('topic')
+    def validate_topic(cls, v):
+        if not v or v.strip() == "":
+            raise ValueError("主题不能为空")
+        return v.strip()
+
+    class Config:
+        use_enum_values = True
+
+class ShotData(BaseModel):
+    sequence: int = Field(..., ge=1, description="镜头序号")
+    prompt: str = Field(..., min_length=10, max_length=1000, description="镜头描述")
+    duration: float = Field(..., gt=0, le=8.0, description="镜头时长（秒）")
+    shotType: str = Field(default="medium shot", description="镜头类型")
+    imagePath: Optional[str] = None
+    videoPath: Optional[str] = None
+    status: str = Field(default="pending", description="状态")
+    qualityScore: Optional[float] = Field(default=None, ge=0, le=1, description="质量分数")
 
 class ScriptConfirmRequest(BaseModel):
-    script: str
-    shots: List[Dict[str, Any]]
+    script: str = Field(..., min_length=50, description="视频脚本")
+    shots: List[ShotData] = Field(..., min_items=1, max_items=12, description="镜头列表")
     options: Optional[Dict[str, Any]] = None
+
+    @validator('shots')
+    def validate_shots_sequence(cls, v):
+        sequences = [shot.sequence for shot in v]
+        if len(sequences) != len(set(sequences)):
+            raise ValueError("镜头序号不能重复")
+        if sorted(sequences) != list(range(1, len(sequences) + 1)):
+            raise ValueError("镜头序号必须从1开始连续")
+        return v
 
 class TaskResponse(BaseModel):
     success: bool
