@@ -116,12 +116,7 @@ export interface VideoGenerationRequest {
   shotCount?: number;               // 镜头数量，3-12个之间
   enableNarration?: boolean;        // 是否启用旁白
   narrationVoice?: NarrationVoice;  // 旁白声音
-}
-  // 新增：旁白/配音相关
-  enableNarration?: boolean;
-  narrationVoice?: string;
   narrationSpeed?: number;
-  // 新增：节奏策略
   pacingStrategy?: string;
 }
 
