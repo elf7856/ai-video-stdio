@@ -30,6 +30,9 @@ from app.api.ai_director import router as ai_director_router
 from app.api.audio import router as audio_router
 from app.api.scripts import router as scripts_router
 from app.api.video_generation import router as video_generation_router
+from app.api.smart_generation import router as smart_generation_router
+from app.api.conversation import router as conversation_router
+from app.api.video_recreation import router as video_recreation_router
 from app.api.upload import router as upload_router
 from app.api.editor import router as editor_router  # 新增：视频编辑器
 from app.api.quality import router as quality_router  # 新增：质量检查
@@ -42,6 +45,14 @@ import logging
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# 过滤掉 GET 请求的 access log（轮询噪音）
+class _SuppressGetFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return '"GET ' not in record.getMessage()
+
+logging.getLogger("uvicorn.access").addFilter(_SuppressGetFilter())
+logging.getLogger("google_genai.models").setLevel(logging.WARNING)
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -92,6 +103,9 @@ app.include_router(auth.router)  # 新增
 app.include_router(users.router) # 新增
 app.include_router(scripts_router)
 app.include_router(video_generation_router)
+app.include_router(smart_generation_router)
+app.include_router(conversation_router, prefix="/api/conversation", tags=["conversation"])
+app.include_router(video_recreation_router)
 app.include_router(editor_router)  # 新增：视频编辑器
 app.include_router(projects_router)  # 恢复启用
 app.include_router(gateway_router)

@@ -58,6 +58,34 @@ const ProjectPage: React.FC = () => {
     const [editingDuration, setEditingDuration] = useState<number>(5);
     const [editingPrompt, setEditingPrompt] = useState<string>('');
 
+    // Panel resize
+    const [leftPanelWidth, setLeftPanelWidth] = useState(260);
+    const [rightPanelWidth, setRightPanelWidth] = useState(480);
+
+    const makeDividerHandler = (
+        getCurrent: () => number,
+        setter: (w: number) => void,
+        direction: 'left' | 'right',
+        min: number,
+        max: number
+    ) => (e: React.MouseEvent) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startWidth = getCurrent();
+        const onMouseMove = (moveEvent: MouseEvent) => {
+            const delta = direction === 'right'
+                ? startX - moveEvent.clientX   // 右侧：向左拖 → 变宽
+                : moveEvent.clientX - startX;  // 左侧：向右拖 → 变宽
+            setter(Math.max(min, Math.min(max, startWidth + delta)));
+        };
+        const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    };
+
     // Snackbar
     const [snackbar, setSnackbar] = useState<{
         open: boolean;
@@ -473,6 +501,20 @@ const ProjectPage: React.FC = () => {
                     activeTab={activeTab}
                     onTabChange={setActiveTab}
                     onShotSelect={setCurrentShotIndex}
+                    width={leftPanelWidth}
+                />
+
+                {/* Drag divider: left panel */}
+                <Box
+                    onMouseDown={makeDividerHandler(() => leftPanelWidth, setLeftPanelWidth, 'left', 180, 480)}
+                    sx={{
+                        width: 4,
+                        cursor: 'col-resize',
+                        bgcolor: '#1a1a1a',
+                        flexShrink: 0,
+                        '&:hover': { bgcolor: '#FF4081' },
+                        transition: 'background-color 0.15s'
+                    }}
                 />
 
                 {/* Center: Video Player */}
@@ -482,6 +524,19 @@ const ProjectPage: React.FC = () => {
                     onShotChange={handleShotChange}
                     onPlayStateChange={handlePlayStateChange}
                     externalSeekTime={externalSeekTime}
+                />
+
+                {/* Drag divider: right panel */}
+                <Box
+                    onMouseDown={makeDividerHandler(() => rightPanelWidth, setRightPanelWidth, 'right', 240, 700)}
+                    sx={{
+                        width: 4,
+                        cursor: 'col-resize',
+                        bgcolor: '#1a1a1a',
+                        flexShrink: 0,
+                        '&:hover': { bgcolor: '#FF4081' },
+                        transition: 'background-color 0.15s'
+                    }}
                 />
 
                 {/* Right Sidebar: Script & Logs */}
@@ -494,6 +549,7 @@ const ProjectPage: React.FC = () => {
                     onEditShot={handleEditShot}
                     onDeleteShot={handleDeleteShot}
                     onConfirmGeneration={handleConfirmGeneration}
+                    width={rightPanelWidth}
                 />
             </Box>
 

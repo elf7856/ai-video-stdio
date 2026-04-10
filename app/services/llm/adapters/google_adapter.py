@@ -37,16 +37,36 @@ class GoogleAdapter(BaseLLMAdapter):
             try:
                 from google import genai
                 from google.genai import types
-                
-                # 保存SDK引用供后续使用
+
                 self.genai = genai
                 self.types = types
-                
-                # 使用新版SDK初始化客户端
-                self.client = genai.Client(api_key=api_key)
-                
+
+                # 优先使用 Vertex AI（无地区限制）
+                vertex_project = settings.vertex_project_id
+                vertex_location = settings.vertex_location
+                vertex_api_key = settings.vertex_api_key
+
+                if vertex_api_key:
+                    # Vertex AI Express 模式：只用 api_key
+                    self.client = genai.Client(
+                        vertexai=True,
+                        api_key=vertex_api_key,
+                    )
+                    logger.info("Google适配器使用 Vertex AI (api_key 模式)")
+                elif vertex_project:
+                    # Vertex AI 标准模式：project + location（需要 ADC）
+                    self.client = genai.Client(
+                        vertexai=True,
+                        project=vertex_project,
+                        location=vertex_location,
+                    )
+                    logger.info(f"Google适配器使用 Vertex AI (project={vertex_project})")
+                else:
+                    self.client = genai.Client(api_key=api_key)
+                    logger.info("Google适配器使用 AI Studio")
+
                 # 模型配置
-                self.model_name = self.config.get("model", "gemini-3-flash-preview")
+                self.model_name = self.config.get("model", "gemini-2.5-flash-preview-04-17")
                 
                 # 为了兼容性，创建一个model对象的包装器
                 self.model = self._create_model_wrapper()

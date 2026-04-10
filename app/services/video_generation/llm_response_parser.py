@@ -152,7 +152,7 @@ class LLMResponseParser:
                 cleaned_shot = {
                     "sequence": shot.get("sequence", i + 1),
                     "prompt": shot["prompt"],
-                    "duration": float(shot.get("duration", 6.0)),
+                    "duration": min(float(shot.get("duration", 6.0)), 8.0),
                     "shotType": shot.get("shotType") or shot.get("shot_type", "medium shot")
                 }
 

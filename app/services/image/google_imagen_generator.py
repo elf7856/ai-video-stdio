@@ -22,10 +22,12 @@ except ImportError:
 
 
 class GoogleImagenGenerator:
-    """Google Imagen 3 图像生成器"""
+    """Google Imagen 3 图像生成器 (Vertex AI)"""
 
     def __init__(self, api_key: Optional[str] = None, model: str = "gemini-3-pro-image-preview"):
-        self.api_key = api_key or settings.google_api_key
+        self.api_key = api_key or settings.vertex_api_key or settings.google_api_key
+        self.project_id = settings.vertex_project_id
+        self.location = settings.vertex_location
         self.model = model
         self._client = None
 
@@ -34,14 +36,31 @@ class GoogleImagenGenerator:
         if self._client is None:
             if not GENAI_AVAILABLE:
                 raise ImportError("google.genai 模块不可用，请安装: pip install google-genai")
-            if not self.api_key:
-                raise ValueError("Google API 密钥未设置")
-            self._client = genai.Client(api_key=self.api_key)
-            logger.info("✅ Google Imagen 客户端初始化完成")
+            if not self.project_id:
+                raise ValueError("VERTEX_PROJECT_ID 未配置")
+            try:
+                if self.api_key:
+                    # Vertex AI Express 模式：只用 api_key
+                    self._client = genai.Client(  # type: ignore
+                        vertexai=True,
+                        api_key=self.api_key,
+                    )
+                    logger.info("✅ Vertex AI Imagen 客户端初始化完成 (api_key 模式)")
+                else:
+                    # 标准模式：project + location（需要 ADC）
+                    self._client = genai.Client(  # type: ignore
+                        vertexai=True,
+                        project=self.project_id,
+                        location=self.location,
+                    )
+                    logger.info(f"✅ Vertex AI Imagen 客户端初始化完成 (project={self.project_id})")
+            except Exception as e:
+                logger.error(f"❌ Vertex AI Imagen 客户端初始化失败: {e}")
+                raise
         return self._client
 
     def is_available(self) -> bool:
-        return bool(self.api_key) and GENAI_AVAILABLE
+        return bool(self.project_id) and GENAI_AVAILABLE
 
     def generate_image(
         self,
@@ -53,27 +72,25 @@ class GoogleImagenGenerator:
         **kwargs
     ) -> str:
         if not self.is_available():
-            raise Exception("Google Imagen API不可用")
+            raise Exception("Google Vertex AI Imagen API不可用，请检查 VERTEX_PROJECT_ID 配置")
 
         try:
-            logger.info(f"🎨 开始生成图像: {prompt[:50]}...")
+            logger.info(f"🎨 开始生成图像 (Vertex AI): {prompt[:50]}...")
 
             if aspect_ratio is None:
                 aspect_ratio = self._size_to_aspect_ratio(size) if size else "1:1"
 
-            # 处理负面提示词
             final_prompt = prompt
             if negative_prompt:
                 final_prompt = f"{prompt}. Avoid: {negative_prompt}"
 
-            # 调用 Gemini API
             aspect_ratio_hint = f"Create a {resolution} resolution image with {aspect_ratio} aspect ratio. "
             enhanced_prompt = aspect_ratio_hint + final_prompt
 
             response = self.client.models.generate_content(
                 model=self.model,
                 contents=enhanced_prompt,
-                config=genai.types.GenerateContentConfig(
+                config=genai.types.GenerateContentConfig(  # type: ignore
                     response_modalities=['TEXT', 'IMAGE'],
                 )
             )
@@ -82,20 +99,21 @@ class GoogleImagenGenerator:
                 raise Exception("API未返回结果")
 
             candidate = response.candidates[0]
-            image_part = next((part for part in candidate.content.parts if hasattr(part, 'inline_data')), None)
+            image_part = next(
+                (part for part in candidate.content.parts
+                 if hasattr(part, 'inline_data') and part.inline_data is not None),
+                None
+            )
 
             if not image_part:
                 raise Exception("响应中未找到图像数据")
 
-            # 创建输出目录
             output_dir = os.path.join(settings.output_dir, "images")
             os.makedirs(output_dir, exist_ok=True)
 
-            # 【关键】生成唯一文件名，防止SameFileError
-            unique_filename = f"gemini_imagen_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+            unique_filename = f"vertex_imagen_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
             output_path = os.path.join(output_dir, unique_filename)
 
-            # 保存图像
             with open(output_path, 'wb') as f:
                 f.write(image_part.inline_data.data)
 
@@ -103,7 +121,7 @@ class GoogleImagenGenerator:
             return output_path
 
         except Exception as e:
-            logger.error(f"❌ Imagen图像生成失败: {e}")
+            logger.error(f"❌ Vertex AI 图像生成失败: {e}")
             raise
 
     def _size_to_aspect_ratio(self, size: Tuple[int, int]) -> str:

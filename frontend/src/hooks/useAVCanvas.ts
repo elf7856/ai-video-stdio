@@ -25,6 +25,7 @@ export const useAVCanvas = ({ orderedShots, containerRef }: UseAVCanvasProps) =>
     const ignoreNextTimeUpdate = useRef(false);
     const targetSeekTime = useRef<number | null>(null);
     const previousShotsRef = useRef<ShotWithVideo[]>([]);
+    const eventCleanupRef = useRef<(() => void) | undefined>(undefined);
 
     // 状态
     const [isReady, setIsReady] = useState(false);
@@ -208,8 +209,8 @@ export const useAVCanvas = ({ orderedShots, containerRef }: UseAVCanvasProps) =>
                 // 保存当前 shots 引用
                 previousShotsRef.current = orderedShots;
 
-                // 返回清理函数
-                return () => {
+                // 存储事件监听器清理函数
+                eventCleanupRef.current = () => {
                     unsubscribeTimeUpdate();
                     unsubscribePlaying();
                     unsubscribePaused();
@@ -221,20 +222,27 @@ export const useAVCanvas = ({ orderedShots, containerRef }: UseAVCanvasProps) =>
             }
         };
 
-        let cleanup: (() => void) | undefined;
-        initAVCanvas().then(fn => { cleanup = fn; });
+        initAVCanvas();
 
-        // 清理函数：只在组件卸载时执行
+        // 不返回 cleanup，避免每次 orderedShots 变化时销毁 AVCanvas
+        // 组件卸载清理由下面单独的 effect 处理
+    }, [orderedShots, containerRef]);
+
+    // 组件卸载时才销毁 AVCanvas（与 orderedShots 无关）
+    useEffect(() => {
         return () => {
             console.log('[useAVCanvas] Component unmounting, cleaning up');
-            if (cleanup) cleanup();
+            if (eventCleanupRef.current) {
+                eventCleanupRef.current();
+                eventCleanupRef.current = undefined;
+            }
             if (avCanvasRef.current) {
                 avCanvasRef.current.destroy();
                 avCanvasRef.current = null;
             }
             spritesRef.current = [];
         };
-    }, [orderedShots, containerRef]);
+    }, []);
 
     // 播放/暂停
     const handlePlayPause = useCallback(() => {

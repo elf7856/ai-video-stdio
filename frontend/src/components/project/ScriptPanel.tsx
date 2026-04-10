@@ -30,6 +30,7 @@ interface ScriptPanelProps {
     onEditShot: (index: number) => void;
     onDeleteShot: (index: number) => void;
     onConfirmGeneration?: () => void;
+    width?: number;
 }
 
 export const ScriptPanel: React.FC<ScriptPanelProps> = ({
@@ -41,6 +42,7 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
     onEditShot,
     onDeleteShot,
     onConfirmGeneration,
+    width = 320,
 }) => {
     // 判断是否正在生成
     const isGenerating = projectData?.status && ['pending', 'generating_script', 'generating_videos', 'checking_quality', 'merging_videos'].includes(projectData.status);
@@ -65,7 +67,8 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
 
     return (
         <Paper sx={{
-            width: 320,
+            width,
+            flexShrink: 0,
             bgcolor: '#0f0f0f',
             borderLeft: '1px solid #222',
             display: 'flex',

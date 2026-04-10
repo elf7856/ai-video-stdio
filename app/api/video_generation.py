@@ -43,33 +43,19 @@ class NarrationVoice(str, Enum):
 
 class VideoGenerationRequest(BaseModel):
     topic: str = Field(..., min_length=2, max_length=200, description="视频主题")
-    style: VideoStyle = Field(default=VideoStyle.PROFESSIONAL, description="视频风格")
-    targetDuration: Optional[int] = Field(
-        default=60,
-        ge=15,
-        le=180,
-        description="目标时长（秒），15-180秒之间"
-    )
-    shotCount: Optional[int] = Field(
-        default=6,
-        ge=3,
-        le=12,
-        description="镜头数量，3-12个之间"
-    )
+    style: str = Field(default="专业", description="视频风格")
+    targetDuration: Optional[int] = Field(default=60, ge=15, le=180, description="目标时长（秒）")
+    shotCount: Optional[int] = Field(default=6, ge=3, le=12, description="镜头数量")
     enableNarration: bool = Field(default=False, description="是否启用旁白")
-    narrationVoice: NarrationVoice = Field(
-        default=NarrationVoice.CHINESE_FEMALE,
-        description="旁白声音"
-    )
+    narrationVoice: str = Field(default="chinese_female", description="旁白声音")
+
+    model_config = {"extra": "ignore"}
 
     @validator('topic')
     def validate_topic(cls, v):
         if not v or v.strip() == "":
             raise ValueError("主题不能为空")
         return v.strip()
-
-    class Config:
-        use_enum_values = True
 
 class ShotData(BaseModel):
     sequence: int = Field(..., ge=1, description="镜头序号")

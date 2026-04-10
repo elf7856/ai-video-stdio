@@ -81,6 +81,36 @@ const GeneratePage: React.FC = () => {
     const navigate = useNavigate();
     const videoRef = useRef<HTMLVideoElement>(null);
 
+    // --- Resizable sidebar ---
+    const [sidebarWidth, setSidebarWidth] = useState(520);
+    const isResizing = useRef(false);
+    const startX = useRef(0);
+    const startWidth = useRef(0);
+
+    const onResizeStart = (e: React.MouseEvent) => {
+        isResizing.current = true;
+        startX.current = e.clientX;
+        startWidth.current = sidebarWidth;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    };
+
+    useEffect(() => {
+        const onMove = (e: MouseEvent) => {
+            if (!isResizing.current) return;
+            const delta = e.clientX - startX.current;
+            setSidebarWidth(Math.min(900, Math.max(320, startWidth.current + delta)));
+        };
+        const onUp = () => {
+            isResizing.current = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    }, []);
+
     // --- State ---
     const [hasStarted, setHasStarted] = useState(false); // Controls Initial vs Studio view
     const [activeTab, setActiveTab] = useState(0); // 0: Create, 1: Script, 2: Storyboard, 3: Logs
@@ -675,16 +705,16 @@ const GeneratePage: React.FC = () => {
             overflow: 'hidden'
         }}>
             {/* LEFT SIDEBAR: CREATIVE CONSOLE */}
-            <Paper sx={{
-                width: { xs: '100%', md: 400 },
-                height: '100%',
-                background: '#111111',
-                borderRight: '1px solid #222',
-                display: 'flex',
-                flexDirection: 'column',
-                zIndex: 10,
-                flexShrink: 0
-            }} square elevation={0}>
+            <Paper
+                style={{ width: sidebarWidth, flexShrink: 0 }}
+                sx={{
+                    height: '100%',
+                    background: '#111111',
+                    borderRight: '1px solid #222',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    zIndex: 10,
+                }} square elevation={0}>
                 
                 {/* Tabs */}
                 <Box sx={{ borderBottom: '1px solid #222' }}>
@@ -1040,8 +1070,23 @@ const GeneratePage: React.FC = () => {
                 </Box>
             </Paper>
 
+            {/* RESIZE HANDLE */}
+            <Box
+                onMouseDown={onResizeStart}
+                sx={{
+                    width: '4px',
+                    height: '100%',
+                    cursor: 'col-resize',
+                    flexShrink: 0,
+                    bgcolor: '#222',
+                    '&:hover': { bgcolor: '#FF4081' },
+                    transition: 'background-color 0.15s',
+                    zIndex: 20,
+                }}
+            />
+
             {/* RIGHT MAIN: STAGE & TIMELINE */}
-            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', minWidth: 0 }}>
                 
                 {/* 1. Main Stage (Player) */}
                 <Box sx={{ 

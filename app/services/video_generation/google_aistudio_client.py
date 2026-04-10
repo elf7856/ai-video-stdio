@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-稳定版Google Gemini Veo 3客户端
-包含重试机制和错误恢复
+Google AI Studio 视频生成客户端 (开发环境)
+使用 AI Studio API，适合开发和测试
 """
 
 import asyncio
@@ -25,26 +25,36 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class RobustGoogleVideoClient(BaseVideoGenerationClient):
-    """稳定的Google Gemini Veo 3视频生成客户端"""
-    
+class AIStudioVideoClient(BaseVideoGenerationClient):
+    """Google AI Studio 视频生成客户端 - 开发环境"""
+
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or settings.google_api_key
         self._client = None  # 缓存客户端实例
-        
+
     @property
     def client(self):
-        """懒加载客户端实例"""
+        """懒加载客户端实例 - 使用 AI Studio 认证"""
         if self._client is None:
             if not GENAI_AVAILABLE:
                 raise ImportError("google.genai 模块不可用，请安装: pip install google-genai")
-            
+
             if not self.api_key:
                 raise ValueError("Google API 密钥未设置")
-                
-            self._client = genai.Client(api_key=self.api_key)  # type: ignore
-            logger.info("✅ Google Gemini 客户端初始化完成")
-            
+
+            # 使用 AI Studio 认证方式（不启用 vertexai）
+            try:
+                self._client = genai.Client(
+                    api_key=self.api_key,
+                    http_options={
+                        'api_version': 'v1beta',
+                    }
+                )
+                logger.info(f"✅ AI Studio 客户端初始化完成 (开发环境)")
+            except Exception as e:
+                logger.error(f"❌ AI Studio 客户端初始化失败: {str(e)}")
+                raise
+
         return self._client
         
     async def generate_video_with_retry(
@@ -80,18 +90,22 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
                     }
     
     async def _generate_video_single_attempt(
-        self, 
-        prompt: str, 
-        image_path: Optional[str] = None, 
+        self,
+        prompt: str,
+        image_path: Optional[str] = None,
         timeout: int = 300
     ) -> Dict[str, Any]:
-        """单次视频生成尝试"""
+        """单次视频生成尝试 - 使用 Vertex AI"""
         try:
             logger.info(f"📝 提示词: {prompt[:50]}...")
-            
+
             # 使用缓存的客户端实例
             client = self.client
-            
+
+            # AI Studio 模型名称
+            model_name = "veo-3.1-fast-generate-preview"
+            logger.info(f"🎯 使用模型: {model_name} (AI Studio)")
+
             # 处理 Image-to-Video 逻辑
             input_image = None
             
@@ -145,14 +159,14 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
             if input_image:
                 logger.info("🚀 启动 Image-to-Video 渲染模式")
                 operation = client.models.generate_videos(
-                    model="veo-3.1-fast-generate-preview",
+                    model=model_name,
                     prompt=prompt,
                     image=input_image,  # 传入图片对象
                 )
             else:
                 logger.info("🚀 启动 Text-to-Video 渲染模式")
                 operation = client.models.generate_videos(
-                    model="veo-3.1-fast-generate-preview",
+                    model=model_name,
                     prompt=prompt,
                 )
             
@@ -384,170 +398,6 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
     def is_available(self) -> bool:
         """检查API是否可用"""
         return bool(self.api_key)
-
-
-class VertexAIVideoClient(RobustGoogleVideoClient):
-    """Vertex AI Veo 视频生成客户端 - 使用 Vertex AI 认证"""
-
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or settings.vertex_api_key or settings.google_api_key
-        self.project_id = settings.vertex_project_id
-        self.location = settings.vertex_location
-        self._client = None
-
-    @property
-    def client(self):
-        """懒加载 Vertex AI 客户端"""
-        if self._client is None:
-            if not GENAI_AVAILABLE:
-                raise ImportError("google.genai 模块不可用，请安装: pip install google-genai")
-            if not self.project_id:
-                raise ValueError("VERTEX_PROJECT_ID 未配置")
-
-            try:
-                if self.api_key:
-                    # Vertex AI Express 模式：只用 api_key
-                    self._client = genai.Client(  # type: ignore
-                        vertexai=True,
-                        api_key=self.api_key,
-                    )
-                    logger.info("✅ Vertex AI 视频客户端初始化完成 (api_key 模式)")
-                else:
-                    # 标准模式：project + location（需要 ADC）
-                    self._client = genai.Client(  # type: ignore
-                        vertexai=True,
-                        project=self.project_id,
-                        location=self.location,
-                    )
-                    logger.info(f"✅ Vertex AI 视频客户端初始化完成 (project={self.project_id})")
-            except Exception as e:
-                logger.error(f"❌ Vertex AI 客户端初始化失败: {e}")
-                raise
-
-        return self._client
-
-    async def _generate_video_single_attempt(
-        self,
-        prompt: str,
-        image_path: Optional[str] = None,
-        timeout: int = 300
-    ) -> Dict[str, Any]:
-        """使用 Vertex AI 模型生成视频（覆盖父类方法）"""
-        try:
-            logger.info(f"📝 提示词: {prompt[:50]}...")
-            client = self.client
-
-            model_name = "veo-3.1-generate-preview"
-            logger.info(f"🎯 使用模型: {model_name} (Vertex AI)")
-
-            # 处理参考图（逻辑与父类一致）
-            input_image = None
-            temp_image_path = None
-
-            if image_path and image_path.startswith("http"):
-                try:
-                    import aiohttp
-                    import aiofiles
-                    from urllib.parse import urlparse
-                    filename = os.path.basename(urlparse(image_path).path) or f"temp_img_{int(time.time())}.png"
-                    temp_dir = "./temp"
-                    os.makedirs(temp_dir, exist_ok=True)
-                    temp_image_path = os.path.join(temp_dir, filename)
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(image_path) as response:
-                            if response.status == 200:
-                                async with aiofiles.open(temp_image_path, 'wb') as f:
-                                    await f.write(await response.read())
-                                image_path = temp_image_path
-                except Exception as dl_err:
-                    logger.warning(f"下载参考图异常: {dl_err}")
-
-            if image_path and os.path.exists(image_path):
-                logger.info(f"📸 上传参考图: {image_path}")
-                try:
-                    uploaded_file = client.files.upload(path=image_path)
-                    input_image = uploaded_file
-                    logger.info(f"✅ 图片上传完成: {uploaded_file.name}")
-                except Exception as upload_err:
-                    raise ValueError(f"图片上传失败: {upload_err}")
-            elif image_path:
-                raise FileNotFoundError(f"参考图路径不存在: {image_path}")
-
-            # 提交生成任务
-            if input_image:
-                logger.info("🚀 启动 Image-to-Video (Vertex AI)")
-                operation = client.models.generate_videos(
-                    model=model_name,
-                    prompt=prompt,
-                    image=input_image,
-                )
-            else:
-                logger.info("🚀 启动 Text-to-Video (Vertex AI)")
-                operation = client.models.generate_videos(
-                    model=model_name,
-                    prompt=prompt,
-                )
-
-            task_id = operation.name
-            logger.info(f"✅ 任务已提交: {task_id}")
-
-            # 轮询（与父类相同逻辑）
-            start_time = time.time()
-            check_intervals = [5, 10, 15, 20, 30, 30, 30]
-            interval_index = 0
-
-            while time.time() - start_time < timeout:
-                try:
-                    current_operation = client.operations.get(operation)
-                    if current_operation.done:
-                        if hasattr(current_operation, 'error') and current_operation.error:
-                            return {"status": "failed", "error": str(current_operation.error), "task_id": task_id}
-
-                        if (hasattr(current_operation, 'response') and
-                                current_operation.response and
-                                hasattr(current_operation.response, 'generated_videos') and
-                                current_operation.response.generated_videos):
-                            generated_video = current_operation.response.generated_videos[0]
-                            download_result = await self._download_video_safe(client, generated_video, task_id)
-                            return {
-                                "status": "completed",
-                                "task_id": task_id,
-                                "download_result": download_result,
-                                "generation_time": time.time() - start_time
-                            }
-                        return {"status": "completed_no_video", "task_id": task_id}
-
-                    current_interval = check_intervals[min(interval_index, len(check_intervals) - 1)]
-                    logger.info(f"⏳ 任务进行中 ({time.time() - start_time:.0f}s)，{current_interval}s 后检查")
-                    await asyncio.sleep(current_interval)
-                    interval_index += 1
-                except Exception as poll_error:
-                    logger.warning(f"轮询异常: {poll_error}")
-                    await asyncio.sleep(10)
-
-            return {"status": "timeout", "task_id": task_id, "elapsed_time": time.time() - start_time}
-
-        except Exception as e:
-            logger.error(f"❌ Vertex AI 生成视频异常: {e}")
-            raise
-
-    def get_capabilities(self) -> Dict[str, Any]:
-        return {
-            "provider": "Google Vertex AI Veo",
-            "model": "veo-3.1-generate-preview",
-            "max_duration": 8.0,
-            "resolution": "1280x720",
-            "cost_per_second": 0.75,
-            "avg_generation_time": 90.0,
-            "quality_score": 0.95,
-            "supported_formats": ["mp4"],
-            "project_id": self.project_id,
-            "location": self.location,
-            "api_status": "available" if self.is_available() else "unavailable",
-        }
-
-    def is_available(self) -> bool:
-        return bool(self.project_id)
 
 
 async def test_robust_client():

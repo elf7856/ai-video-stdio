@@ -388,7 +388,11 @@ const VideoClip: React.FC<VideoClipProps> = ({
 }) => {
     const [thumbnails, setThumbnails] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
+    const [dragDuration, setDragDuration] = useState<number | null>(null);
     const generationInProgressRef = useRef(false);
+
+    // 当 shot.duration 外部更新时，重置拖动状态
+    const displayDuration = dragDuration ?? shot.duration;
 
     useEffect(() => {
         if (!shot.videoData?.videoPath) {
@@ -460,13 +464,13 @@ const VideoClip: React.FC<VideoClipProps> = ({
                 position: 'absolute',
                 left: 80 + startOffset * pxPerSec,
                 top: 0,
-                width: shot.duration * pxPerSec,
+                width: displayDuration * pxPerSec,
                 height: '100%',
                 bgcolor: isSelected ? '#252525' : '#1a1a1a',
                 border: isSelected ? '2px solid #FF4081' : '1px solid #333',
                 borderRadius: 0.5,
                 overflow: 'hidden',
-                transition: 'all 0.15s',
+                transition: dragDuration !== null ? 'none' : 'all 0.15s',
                 '&:hover': {
                     bgcolor: '#252525',
                     borderColor: '#555'
@@ -537,7 +541,7 @@ const VideoClip: React.FC<VideoClipProps> = ({
                 borderTop: '1px solid rgba(255,255,255,0.1)'
             }}>
                 <Typography variant="caption" color="white" fontWeight={500} noWrap>
-                    Shot {index + 1} • {Number(shot.duration).toFixed(2)}s
+                    Shot {index + 1} • {Number(displayDuration).toFixed(2)}s
                 </Typography>
             </Box>
 
@@ -578,17 +582,23 @@ const VideoClip: React.FC<VideoClipProps> = ({
 
                         videoElement.load();
 
+                        let currentDragDuration = startDuration;
+
                         const handleMouseMove = (moveEvent: MouseEvent) => {
                             const deltaX = moveEvent.clientX - startX;
                             const deltaDuration = deltaX / pxPerSec;
                             const newDuration = Math.max(0.5, Math.min(maxDuration, startDuration + deltaDuration));
-
-                            onShotDurationChange(index, newDuration);
+                            currentDragDuration = newDuration;
+                            // 只更新本地 UI，不触发父组件状态更新（避免 AVCanvas 重新初始化）
+                            setDragDuration(newDuration);
                         };
 
                         const handleMouseUp = () => {
                             document.removeEventListener('mousemove', handleMouseMove);
                             document.removeEventListener('mouseup', handleMouseUp);
+                            // 拖动结束后才通知父组件，AVCanvas 只更新一次
+                            setDragDuration(null);
+                            onShotDurationChange(index, currentDragDuration);
                         };
 
                         document.addEventListener('mousemove', handleMouseMove);

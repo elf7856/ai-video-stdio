@@ -14,6 +14,7 @@ interface ShotListProps {
     activeTab: number;
     onTabChange: (value: number) => void;
     onShotSelect: (index: number) => void;
+    width?: number;
 }
 
 export const ShotList: React.FC<ShotListProps> = ({
@@ -22,12 +23,14 @@ export const ShotList: React.FC<ShotListProps> = ({
     activeTab,
     onTabChange,
     onShotSelect,
+    width = 300,
 }) => {
     const theme = useTheme();
 
     return (
         <Paper sx={{
-            width: 300,
+            width,
+            flexShrink: 0,
             bgcolor: '#0f0f0f',
             borderRight: '1px solid #222',
             display: 'flex',

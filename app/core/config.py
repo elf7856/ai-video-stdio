@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY", description="Google Gemini API密钥")
     pexels_api_key: str = Field(default="", alias="PEXELS_API_KEY", description="Pexels API密钥")
 
+    # Vertex AI 配置
+    vertex_project_id: Optional[str] = Field(default=None, alias="VERTEX_PROJECT_ID")
+    vertex_location: str = Field(default="us-central1", alias="VERTEX_LOCATION")
+    vertex_api_key: Optional[str] = Field(default=None, alias="VERTEX_API_KEY")
+    vertex_auth_method: str = Field(default="api_key", alias="VERTEX_AUTH_METHOD")
+
     # 多平台上传配置
     google_client_id: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_ID", description="Google OAuth Client ID")
     google_client_secret: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_SECRET", description="Google OAuth Client Secret")

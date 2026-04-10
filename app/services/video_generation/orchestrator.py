@@ -16,7 +16,9 @@ from enum import Enum
 
 from app.services.llm.service import LLMService, ProviderType
 from app.services.video_generation.base_client import VideoGenerationRequest
-from app.services.video_generation.google_robust_client import RobustGoogleVideoClient
+from app.services.video_generation.google_robust_client import RobustGoogleVideoClient, VertexAIVideoClient
+from app.services.video_generation.agents.script_writer_agent import ScriptWriterAgent
+from app.services.video_generation.agents.prompt_evaluator_agent import PromptEvaluatorAgent
 from app.services.image.google_imagen_generator import GoogleImagenGenerator
 # 使用轻量级处理器（基于 ffmpeg，不需要 cv2/moviepy）
 try:
@@ -96,6 +98,7 @@ class TaskState:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     config: Optional[GenerationConfig] = None
     user_id: Optional[int] = None
+    visual_style_guide: Dict[str, str] = field(default_factory=dict)
 
     def add_log(self, message: str, level: str = "info"):
         self.logs.append({"timestamp": datetime.now().strftime("%H:%M:%S"), "message": message, "level": level})
@@ -133,14 +136,15 @@ class TaskState:
                 "shot_count": self.config.shot_count if self.config else 6
             } if self.config else None,
             "logs": self.logs,
-            "createdAt": self.created_at
+            "createdAt": self.created_at,
+            "visualStyleGuide": self.visual_style_guide
         }
 
 class VideoGenerationOrchestrator:
     def __init__(self, output_dir: Optional[str] = None):
         self.output_dir = output_dir or settings.output_dir
         self.llm = LLMService(provider=ProviderType.GOOGLE)
-        self.video_client = RobustGoogleVideoClient()
+        self.video_client = VertexAIVideoClient()
         self.image_generator = GoogleImagenGenerator()
         self.video_processor = VideoProcessor()
         self.tts_service = TTSService()
@@ -148,6 +152,8 @@ class VideoGenerationOrchestrator:
         self.storage = get_storage_service()
         self.projects_dir = Path(self.output_dir) / "projects"
         self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self.script_writer = ScriptWriterAgent()
+        self.prompt_evaluator = PromptEvaluatorAgent()
 
     def _get_project_dir(self, task_id: str) -> Path:
         d = self.projects_dir / task_id
@@ -196,6 +202,7 @@ class VideoGenerationOrchestrator:
             if c: state.config = GenerationConfig(topic=c.get("topic",""), shot_count=c.get("shot_count",6))
             for s in data.get("shots", []):
                 state.shots.append(ShotInfo(sequence=s.get("sequence"), prompt=s.get("prompt"), duration=s.get("duration"), shot_type=s.get("shotType"), image_path=s.get("imagePath"), video_path=s.get("videoPath"), status=s.get("status"), quality_score=s.get("qualityScore")))
+            state.visual_style_guide = data.get("visualStyleGuide", {})
             return state
         except Exception as e:
             logger.error(f"加载状态失败: {e}")
@@ -260,16 +267,61 @@ class VideoGenerationOrchestrator:
             ]
 
             state.status = TaskStatus.GENERATING_SCRIPT
+
+            # 构建视觉风格指南（供后续 agent 使用）
+            state.visual_style_guide = {
+                "color_palette": "natural, professional tones",
+                "lighting_style": "soft natural light",
+                "visual_quality": "cinematic, high quality",
+                "overall_mood": config.style
+            }
+
+            # Prompt 评估与优化
+            try:
+                state.add_log("🔍 正在评估分镜 prompt 质量...")
+                storyboard = [{"sequence": s.sequence, "prompt": s.prompt} for s in state.shots]
+                evaluation = await self.prompt_evaluator.evaluate_storyboard(
+                    storyboard=storyboard,
+                    visual_style_guide=state.visual_style_guide
+                )
+                optimized_count = 0
+                for shot_eval in evaluation.shot_evaluations:
+                    if shot_eval.optimized_prompt and shot_eval.quality_level.value in ("excellent", "good", "fair", "poor"):
+                        shot = next((s for s in state.shots if s.sequence == shot_eval.shot_id), None)
+                        if shot:
+                            logger.info(f"镜头 {shot.sequence} prompt 优化 ({shot_eval.quality_level.value}): {shot.prompt[:60]}... → {shot_eval.optimized_prompt[:60]}...")
+                            shot.prompt = shot_eval.optimized_prompt
+                            optimized_count += 1
+                if optimized_count:
+                    state.add_log(f"✨ 已优化 {optimized_count} 个镜头的 prompt")
+                if not evaluation.should_proceed:
+                    state.add_log("⚠️ 部分镜头质量仍较低，建议确认后再继续", "warning")
+            except Exception as e:
+                logger.warning(f"Prompt 评估跳过: {e}")
+
             self._save_task_state(state)
 
-            # 2. 分镜图生成
-            for i, shot in enumerate(state.shots):
-                state.add_log(f"🎨 正在绘制分镜图 {i+1}/{len(state.shots)}...")
-                l_path = await asyncio.to_thread(self.image_generator.generate_image, prompt=shot.prompt)
-                if l_path:
-                    shot.image_path = self.storage.save(l_path, f"projects/{task_id}/images/{os.path.basename(l_path)}")
-                state.progress = 20 + (10 * (i+1) / len(state.shots))
-                self._save_task_state(state)
+            # 2. 分镜图并行生成
+            state.add_log(f"🎨 并行绘制 {len(state.shots)} 张分镜图...")
+
+            async def _generate_one_image(shot: ShotInfo, idx: int) -> None:
+                for attempt in range(3):
+                    try:
+                        l_path = await asyncio.to_thread(self.image_generator.generate_image, prompt=shot.prompt)
+                        if l_path:
+                            shot.image_path = self.storage.save(l_path, f"projects/{task_id}/images/{os.path.basename(l_path)}")
+                        return
+                    except Exception as e:
+                        if attempt < 2:
+                            logger.warning(f"分镜图 {idx+1} 生成失败 (尝试 {attempt+1}/3): {e}，5s 后重试")
+                            await asyncio.sleep(5)
+                        else:
+                            logger.error(f"分镜图 {idx+1} 生成失败，跳过: {e}")
+                            state.add_log(f"⚠️ 分镜图 {idx+1} 生成失败，跳过", "warning")
+
+            await asyncio.gather(*[_generate_one_image(shot, i) for i, shot in enumerate(state.shots)])
+            state.progress = 30
+            self._save_task_state(state)
 
             state.status = TaskStatus.WAITING_CONFIRMATION
             state.add_log("✅ 规划完成，等待确认")
@@ -292,15 +344,32 @@ class VideoGenerationOrchestrator:
 
         try:
             # 1. 渲染视频片段
+            visual_style_guide = state.visual_style_guide or {"overall_mood": state.config.style if state.config else "专业"}
             for i, shot in enumerate(state.shots):
                 state.add_log(f"🎥 正在渲染镜头 {i+1}...")
                 local_img = self._get_local_path(shot.image_path)
-                req = VideoGenerationRequest(prompt=shot.prompt, duration=min(shot.duration, 8.0), image_path=local_img)
+
+                # 将静态图片 prompt 转换为适合视频生成的动态 prompt
+                video_prompt = shot.prompt
+                try:
+                    video_prompt = await self.prompt_evaluator.convert_image_to_video_prompt(
+                        image_prompt=shot.prompt,
+                        duration=min(shot.duration, 8.0),
+                        visual_style_guide=visual_style_guide
+                    )
+                    logger.info(f"镜头 {shot.sequence} 视频 prompt 转换完成: {video_prompt[:80]}...")
+                    state.add_log(f"✨ 镜头 {shot.sequence} prompt 已转换为动态视频描述")
+                    shot.prompt = video_prompt
+                    self._save_task_state(state)
+                except Exception as e:
+                    logger.warning(f"镜头 {shot.sequence} prompt 转换失败，使用原始 prompt: {e}")
+
+                req = VideoGenerationRequest(prompt=video_prompt, duration=min(shot.duration, 8.0), image_path=local_img)
                 res = await self.video_client.generate_video(req)
                 if res.success:
                     # 将生成的视频归档到项目目录
                     shot_filename = f"shot_{shot.sequence}_{uuid.uuid4().hex[:6]}.mp4"
-                    project_video_path = self.storage.save(res.local_path, f"projects/{task_id}/videos/{shot_filename}")
+                    project_video_path = self.storage.save(res.local_path, f"projects/{state.task_id}/videos/{shot_filename}")
                     
                     shot.video_path = project_video_path
                     shot.status = "success"
