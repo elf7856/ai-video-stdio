@@ -74,7 +74,7 @@ class LLMService:
             "retry_delay": 2,
             "auto_fallback": True,  # 失败时自动切换到其他提供商
             "models": {
-                "google": "gemini-3-flash-preview"
+                "google": "gemini-3-flash"
             },
             "default_params": {
                 "max_tokens": 2000,
@@ -86,7 +86,7 @@ class LLMService:
         """初始化所有适配器（但只有配置了 API 密钥的才可用）"""
         adapter_configs = {
             ProviderType.GOOGLE: {
-                "model": self.config["models"].get("google", "gemini-3-flash-preview"),
+                "model": self.config["models"].get("google", "gemini-3-flash"),
                 "timeout": self.config["timeout"],
                 **self.config["default_params"]
             }

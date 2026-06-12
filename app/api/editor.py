@@ -17,6 +17,7 @@ from app.utils.database import get_db
 from app.crud.editor import EditorProjectCRUD, SubtitleCRUD
 from app.api.deps import get_current_user_optional
 from app.models.user import User
+from app.services.llm.service import LLMService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/editor", tags=["视频编辑器"])
@@ -377,3 +378,110 @@ async def render_preview(project_id: str, max_duration: float = 10.0):
     except Exception as e:
         logger.error(f"预览渲染失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== AI 编辑助手 ====================
+
+class AICommandRequest(BaseModel):
+    message: str
+    task_id: str
+    current_script: str = ""
+    current_shots: List[Dict[str, Any]] = []
+    conversation_history: List[Dict[str, str]] = []
+
+
+class AICommandResponse(BaseModel):
+    success: bool
+    ai_response: str
+    operations: List[Dict[str, Any]] = []
+    conversation_history: List[Dict[str, str]] = []
+    error: Optional[str] = None
+
+
+_AI_EDITOR_SYSTEM_PROMPT = """你是一个专业的视频剪辑 AI 助手。用户会用自然语言描述对视频项目的修改需求，你需要：
+1. 用简洁友好的中文回复用户
+2. 将修改意图转换为结构化操作列表（JSON）
+
+可用的操作类型（operations）：
+- update_shot: 修改指定镜头（shot_index 从 0 开始）
+  字段：shot_index(int), changes: {prompt?, duration?, shotType?}
+- delete_shot: 删除镜头
+  字段：shot_index(int)
+- reorder_shots: 重新排序（new_order 是镜头的新下标顺序数组）
+  字段：new_order: [int]
+- update_script: 更新整体脚本
+  字段：script(str)
+- regenerate_shot: 标记镜头需要重新生成
+  字段：shot_index(int)
+
+严格按以下 JSON 格式回复（不要加 markdown 代码块）：
+{
+  "message": "对用户的回复（自然语言）",
+  "operations": [
+    {"type": "update_shot", "shot_index": 0, "changes": {"prompt": "新提示词", "duration": 5}},
+    ...
+  ]
+}
+
+如果用户的指令无需操作（如只是提问），operations 返回空数组。"""
+
+
+@router.post("/ai-command", response_model=AICommandResponse)
+async def ai_editor_command(request: AICommandRequest):
+    """AI 编辑助手：将自然语言指令转换为结构化编辑操作"""
+    import json, re
+
+    try:
+        llm = LLMService()
+
+        # 构建上下文消息
+        shots_summary = "\n".join(
+            f"  [{i}] {s.get('prompt', '')[:60]}... ({s.get('duration', 0)}s)"
+            for i, s in enumerate(request.current_shots)
+        ) or "  （无镜头）"
+
+        context = f"当前项目共 {len(request.current_shots)} 个镜头：\n{shots_summary}"
+        if request.current_script:
+            context += f"\n\n脚本摘要：{request.current_script[:200]}..."
+
+        messages = [{"role": "system", "content": _AI_EDITOR_SYSTEM_PROMPT}]
+        for h in request.conversation_history[-10:]:  # 最近10条历史
+            messages.append({"role": h["role"], "content": h["content"]})
+        messages.append({"role": "user", "content": f"{context}\n\n用户指令：{request.message}"})
+
+        result = llm.call(messages=messages, temperature=0.3)
+        if not result.get("success"):
+            raise Exception(result.get("error", "LLM 调用失败"))
+        raw = result["content"]
+
+        # 解析 JSON 响应
+        try:
+            # 兼容带 markdown 代码块的情况
+            clean = re.sub(r"```json|```", "", raw).strip()
+            parsed = json.loads(clean)
+            ai_message = parsed.get("message", raw)
+            operations = parsed.get("operations", [])
+        except Exception:
+            ai_message = raw
+            operations = []
+
+        new_history = request.conversation_history + [
+            {"role": "user", "content": request.message},
+            {"role": "assistant", "content": ai_message},
+        ]
+
+        return AICommandResponse(
+            success=True,
+            ai_response=ai_message,
+            operations=operations,
+            conversation_history=new_history,
+        )
+
+    except Exception as e:
+        logger.error(f"AI 编辑指令处理失败: {e}", exc_info=True)
+        return AICommandResponse(
+            success=False,
+            ai_response="抱歉，处理指令时出错，请重试。",
+            error=str(e),
+            conversation_history=request.conversation_history,
+        )

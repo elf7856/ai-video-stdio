@@ -209,8 +209,7 @@ class CharacterManagerAgent:
 
         try:
             # 生成图片
-            img_path = await asyncio.to_thread(
-                self.image_generator.generate_image,
+            img_path = await self.image_generator.generate_image(
                 prompt=reference_prompt
             )
 

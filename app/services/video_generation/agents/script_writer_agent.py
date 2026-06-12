@@ -3,6 +3,7 @@ ScriptWriterAgent - 编剧 Agent
 负责理解用户意图，补充完整剧本，提取关键元素
 """
 
+import asyncio
 import logging
 import json
 import re
@@ -69,6 +70,15 @@ class ScriptMetadata:
 
 
 @dataclass
+class ShotPlan:
+    """单个分镜计划"""
+    sequence: int
+    prompt: str       # 英文视频生成 prompt
+    duration: float   # 时长（秒，≤8）
+    shot_type: str    # 镜头语言
+
+
+@dataclass
 class ScriptResult:
     """编剧 Agent 输出结果"""
     script: str  # 完整剧本文本
@@ -77,6 +87,11 @@ class ScriptResult:
     estimated_duration: int  # 预估时长（秒）
     recommended_shot_count: int  # 推荐镜头数
     complexity_level: str  # 复杂度：simple/medium/complex
+    shots: List[ShotPlan] = None  # 分镜列表（新增）
+
+    def __post_init__(self):
+        if self.shots is None:
+            self.shots = []
 
 
 class ScriptWriterAgent:
@@ -98,6 +113,7 @@ class ScriptWriterAgent:
         self,
         user_input: str,
         duration: Optional[int] = None,
+        shot_count: Optional[int] = None,
         style: str = "专业",
         target_audience: str = "通用",
         additional_context: Optional[Dict[str, Any]] = None
@@ -121,16 +137,18 @@ class ScriptWriterAgent:
         prompt = self._build_script_prompt(
             user_input=user_input,
             duration=duration,
+            shot_count=shot_count,
             style=style,
             target_audience=target_audience,
             additional_context=additional_context
         )
 
-        # 2. 调用 LLM 创作剧本
+        # 2. 调用 LLM（用 asyncio.to_thread 避免阻塞 event loop）
         try:
-            response = self.llm.call(
+            response = await asyncio.to_thread(
+                self.llm.call,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.7  # 较高的温度以获得更有创意的剧本
+                temperature=0.7
             )
 
             # 3. 解析 LLM 响应
@@ -139,12 +157,8 @@ class ScriptWriterAgent:
             # 4. 构建结果
             result = self._build_script_result(script_data)
 
-            logger.info(f"✅ 剧本创作完成:")
-            logger.info(f"   角色数: {len(result.metadata.characters)}")
-            logger.info(f"   场景数: {len(result.metadata.scenes)}")
-            logger.info(f"   叙事结构: {result.metadata.narrative.arc_type.value}")
-            logger.info(f"   复杂度: {result.complexity_level}")
-
+            logger.info(f"✅ 剧本创作完成: {len(result.metadata.characters)} 个角色, "
+                        f"{len(result.shots)} 个镜头, 叙事={result.metadata.narrative.arc_type.value}")
             return result
 
         except Exception as e:
@@ -157,7 +171,8 @@ class ScriptWriterAgent:
         duration: Optional[int],
         style: str,
         target_audience: str,
-        additional_context: Optional[Dict[str, Any]]
+        additional_context: Optional[Dict[str, Any]],
+        shot_count: Optional[int] = None
     ) -> str:
         """构建剧本创作提示词"""
 
@@ -181,14 +196,11 @@ class ScriptWriterAgent:
 ---
 """
 
-        # 时长建议
-        duration_guidance = ""
-        if duration:
-            duration_guidance = f"目标时长约为 {duration} 秒。"
-        else:
-            duration_guidance = "请根据内容深度自主规划合理的时长（建议15-90秒）。"
+        # 时长 & 镜头数约束
+        duration_guidance = f"目标时长约为 {duration} 秒。" if duration else "请根据内容深度自主规划合理的时长（建议15-90秒）。"
+        shot_guidance = f"必须生成恰好 {shot_count} 个镜头。" if shot_count else "请根据内容自主规划镜头数（建议4-8个）。"
 
-        prompt = f"""你是一位获得过艾美奖的专业编剧和叙事专家。请为以下视频创作一个完整、专业的剧本。
+        prompt = f"""你是一位获得过艾美奖的专业编剧、叙事专家和视频导演。请为以下视频一次性完成剧本创作和分镜规划。
 
 {context_section}
 
@@ -197,6 +209,7 @@ class ScriptWriterAgent:
 - **视觉风格**: {style}
 - **目标受众**: {target_audience}
 - **时长要求**: {duration_guidance}
+- **镜头要求**: {shot_guidance}
 
 **【编剧职责】**
 
@@ -321,20 +334,51 @@ class ScriptWriterAgent:
     "estimated_duration": 60,
     "recommended_shot_count": 6,
     "complexity_level": "simple/medium/complex",
-    "special_requirements": ["特殊要求1", "特殊要求2"],
     "consistency_priorities": ["需要重点保证一致性的元素"]
-  }}
+  }},
+
+  "shots": [
+    {{
+      "sequence": 1,
+      "prompt": "Detailed English prompt for AI video generation. Must include: subject action, camera movement, lighting, environment. Min 50 words.",
+      "duration": 7.0,
+      "shot_type": "镜头语言（如：Wide Shot, Close-Up, Tracking Shot）"
+    }}
+  ]
 }}
 ```
 
+**【分镜规划规则】**
+
+- prompt 必须英文，包含：主体+动作、镜头运动、光影、环境，≥50 词
+- 角色描述在所有镜头中必须使用相同的 visual_keywords（保证一致性）
+- 镜头之间要有逻辑衔接（全景→中景→近景 或 按叙事发展）
+- 所有 duration 总和应接近目标时长
+
+**【镜头时长节奏设计】**（单位：秒，硬限制 5-8 秒）
+
+根据镜头在叙事中的作用选择时长，**禁止所有镜头使用相同时长**：
+
+| 镜头类型 | 建议时长 | 使用场景 |
+|---------|---------|---------|
+| 建立镜头 / 开场 | 7-8 秒 | 交代环境、第一印象 |
+| 主要叙事 / 动作 | 6-7 秒 | 核心情节推进 |
+| 特写 / 情绪 | 5-6 秒 | 细节、情绪高潮 |
+| 快切 / 转场 | 5 秒 | 节奏加速、场景切换 |
+
+节奏设计原则：
+- 开头慢（7-8s）→ 中间有起伏（5-7s）→ 高潮快切（5s）→ 结尾沉淀（7-8s）
+- 连续超过 3 个相同时长的镜头是错误的
+- 时长变化创造节奏感，比全部 8 秒更有电影质感
+
 **【质量标准】**
 
-1. ✅ 剧本必须完整、连贯、有情感起伏
-2. ✅ 角色描述必须详细、具体、可视化
-3. ✅ 场景描述必须具体、有氛围感
-4. ✅ 视觉风格指南必须统一、明确
-5. ✅ 叙事结构必须清晰、符合逻辑
-6. ✅ 核心信息点必须在剧本中体现
+1. ✅ 剧本完整、连贯、有情感起伏
+2. ✅ 角色描述详细、具体、可视化，且所有镜头保持一致的关键词
+3. ✅ 场景描述具体、有氛围感
+4. ✅ 视觉风格指南统一、明确
+5. ✅ 叙事结构清晰、符合逻辑
+6. ✅ 分镜 prompt 详细、专业、适合 AI 视频生成
 
 **【创意要求】**
 
@@ -373,6 +417,7 @@ class ScriptWriterAgent:
             for field in required_fields:
                 if field not in script_data:
                     raise ValueError(f"缺少必要字段: {field}")
+            # shots 是新增字段，允许缺失（降级处理）
 
             return script_data
 
@@ -434,6 +479,19 @@ class ScriptWriterAgent:
             key_messages=script_data["metadata"]["key_messages"]
         )
 
+        # 解析分镜列表
+        shots: List[ShotPlan] = []
+        for s in script_data.get("shots", []):
+            try:
+                shots.append(ShotPlan(
+                    sequence=int(s.get("sequence", len(shots) + 1)),
+                    prompt=s.get("prompt", ""),
+                    duration=max(5.0, min(8.0, float(s.get("duration", 7.0)))),
+                    shot_type=s.get("shot_type", s.get("shotType", "Medium Shot"))
+                ))
+            except Exception as e:
+                logger.warning(f"跳过无效分镜数据: {e}")
+
         # 构建结果
         result = ScriptResult(
             script=script_data["script"],
@@ -441,7 +499,8 @@ class ScriptWriterAgent:
             visual_style_guide=script_data["visual_style_guide"],
             estimated_duration=script_data["production_notes"]["estimated_duration"],
             recommended_shot_count=script_data["production_notes"]["recommended_shot_count"],
-            complexity_level=script_data["production_notes"]["complexity_level"]
+            complexity_level=script_data["production_notes"]["complexity_level"],
+            shots=shots
         )
 
         return result

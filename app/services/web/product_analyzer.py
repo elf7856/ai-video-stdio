@@ -4,6 +4,7 @@
 """
 
 import logging
+import asyncio
 from typing import Dict, Any, Optional
 from app.services.llm.service import LLMService, ProviderType
 
@@ -36,7 +37,13 @@ class ProductAnalyzer:
 
             # 调用LLM分析
             logger.info("🤖 使用LLM分析产品信息...")
-            response = await self.llm.generate_text(prompt)
+            result = await asyncio.to_thread(
+                self.llm.simple_call,
+                prompt,
+                timeout=20,
+                retry_count=1,
+            )
+            response = result.get("content", "")
 
             # 解析LLM响应
             product_info = self._parse_llm_response(response)

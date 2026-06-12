@@ -7,8 +7,9 @@ import os
 import time
 import logging
 import uuid
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, List
 from app.core.config import settings
+from app.services.google_error_utils import format_google_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +21,19 @@ except ImportError:
     GENAI_AVAILABLE = False
     genai = None
 
+# 懒加载 PIL（仅在需要参考图时使用）
+try:
+    from PIL import Image as PILImage
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    PILImage = None
+
 
 class GoogleImagenGenerator:
     """Google Imagen 3 图像生成器 (Vertex AI)"""
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-3-pro-image-preview"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-3-pro-image"):
         self.api_key = api_key or settings.vertex_api_key or settings.google_api_key
         self.project_id = settings.vertex_project_id
         self.location = settings.vertex_location
@@ -40,7 +49,6 @@ class GoogleImagenGenerator:
                 raise ValueError("VERTEX_PROJECT_ID 未配置")
             try:
                 if self.api_key:
-                    # Vertex AI Express 模式：只用 api_key
                     self._client = genai.Client(  # type: ignore
                         vertexai=True,
                         api_key=self.api_key,
@@ -60,17 +68,24 @@ class GoogleImagenGenerator:
         return self._client
 
     def is_available(self) -> bool:
-        return bool(self.project_id) and GENAI_AVAILABLE
+        return bool(self.project_id) and bool(self.api_key) and GENAI_AVAILABLE
 
-    def generate_image(
+    async def generate_image(
         self,
         prompt: str,
         negative_prompt: Optional[str] = None,
         size: Optional[Tuple[int, int]] = None,
         aspect_ratio: Optional[str] = None,
         resolution: str = "medium",
+        reference_images: Optional[List[str]] = None,
         **kwargs
     ) -> str:
+        """生成图像。
+
+        Args:
+            reference_images: 参考图路径列表（角色锁定/场景锁定）。利用 Gemini 3 Pro Image
+                的多模态能力，把参考图与文本一起作为 contents，使输出与参考保持一致。
+        """
         if not self.is_available():
             raise Exception("Google Vertex AI Imagen API不可用，请检查 VERTEX_PROJECT_ID 配置")
 
@@ -87,9 +102,35 @@ class GoogleImagenGenerator:
             aspect_ratio_hint = f"Create a {resolution} resolution image with {aspect_ratio} aspect ratio. "
             enhanced_prompt = aspect_ratio_hint + final_prompt
 
-            response = self.client.models.generate_content(
+            # 构建 contents：纯文本 → 字符串；带参考图 → [text, image, image, ...]
+            contents: Any = enhanced_prompt
+            valid_refs: List[str] = []
+            if reference_images:
+                if not PIL_AVAILABLE:
+                    logger.warning("⚠️ 提供了参考图但 PIL 不可用，将退化为纯文本生成")
+                else:
+                    for ref_path in reference_images:
+                        if not ref_path or not os.path.exists(ref_path):
+                            logger.warning(f"⚠️ 参考图不存在，跳过: {ref_path}")
+                            continue
+                        valid_refs.append(ref_path)
+
+            if valid_refs:
+                ref_instruction = (
+                    "Use the following reference image(s) to lock the visual identity "
+                    "(character appearance, outfit, distinctive features). "
+                    "Match faces, body shapes, clothing and styling exactly. "
+                    "Then render the scene described below.\n\n"
+                )
+                pil_images = [PILImage.open(p) for p in valid_refs]
+                contents = [ref_instruction + enhanced_prompt, *pil_images]
+                logger.info(f"  使用 {len(valid_refs)} 张参考图锁定视觉一致性")
+
+            import asyncio
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
                 model=self.model,
-                contents=enhanced_prompt,
+                contents=contents,
                 config=genai.types.GenerateContentConfig(  # type: ignore
                     response_modalities=['TEXT', 'IMAGE'],
                 )
@@ -121,7 +162,20 @@ class GoogleImagenGenerator:
             return output_path
 
         except Exception as e:
-            logger.error(f"❌ Vertex AI 图像生成失败: {e}")
+            logger.error(
+                "❌ Vertex AI 图像生成失败详情: %s",
+                format_google_api_error(
+                    e,
+                    {
+                        "model": self.model,
+                        "project_id": self.project_id,
+                        "location": self.location,
+                        "aspect_ratio": aspect_ratio if "aspect_ratio" in locals() else None,
+                        "resolution": resolution,
+                        "reference_image_count": len(valid_refs) if "valid_refs" in locals() else 0,
+                    },
+                ),
+            )
             raise
 
     def _size_to_aspect_ratio(self, size: Tuple[int, int]) -> str:

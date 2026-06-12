@@ -103,7 +103,7 @@ class AIStudioVideoClient(BaseVideoGenerationClient):
             client = self.client
 
             # AI Studio 模型名称
-            model_name = "veo-3.1-fast-generate-preview"
+            model_name = "veo-3.1-fast-generate-001"
             logger.info(f"🎯 使用模型: {model_name} (AI Studio)")
 
             # 处理 Image-to-Video 逻辑
@@ -373,7 +373,7 @@ class AIStudioVideoClient(BaseVideoGenerationClient):
         # 这里返回基于官方文档和实际测试的信息
         return {
             "provider": "Google Gemini Veo 3.1 Fast",
-            "model": "veo-3.1-fast-generate-preview",
+            "model": "veo-3.1-fast-generate-001",
             "max_duration": 8.0,  # 官方文档确认的最大时长
             "resolution": "1280x720",  # 默认分辨率
             "cost_per_second": 0.75,  # 官方定价: $0.75/秒

@@ -12,14 +12,36 @@ class VideoDownloader:
     """视频下载器"""
     
     def __init__(self):
-        self.supported_platforms = {
-            'youtube': self._download_youtube,
-            'bilibili': self._download_bilibili,
-            'tiktok': self._download_tiktok,
-            'instagram': self._download_instagram,
-            'twitter': self._download_twitter,
-            'general': self._download_general
+        youtube_extra_opts = {
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'referer': 'https://www.youtube.com/',
+            'sleep_interval': 1,
+            'max_sleep_interval': 3,
+            'sleep_interval_subtitles': 1,
+            'retries': 3,
+            'fragment_retries': 3,
+            'skip_unavailable_fragments': True,
+            'socket_timeout': 30,
+            'http_chunk_size': 10485760,
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['hls', 'dash'],
+                    'player_skip': ['js'],
+                }
+            }
         }
+        self.platform_download_configs = {
+            'youtube': {
+                'fmt': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
+                'extra_opts': youtube_extra_opts,
+            },
+            'bilibili': {'fmt': 'best'},
+            'tiktok': {},
+            'instagram': {},
+            'twitter': {},
+            'general': {'fallback_to_http': True},
+        }
+        self.supported_platforms = set(self.platform_download_configs.keys())
     
     async def download_video(self, url: str, output_dir: str = None, cookies_file: str = None) -> Dict:
         """下载视频"""
@@ -33,13 +55,14 @@ class VideoDownloader:
             
             os.makedirs(output_dir, exist_ok=True)
             
-            # 下载视频
-            if platform in self.supported_platforms:
-                result = await self.supported_platforms[platform](url, output_dir, cookies_file)
-                return result
-            else:
-                # 尝试通用下载
-                return await self._download_general(url, output_dir, cookies_file)
+            platform, config = self._get_platform_download_config(platform)
+            return await self._download_with_ytdlp(
+                url=url,
+                output_dir=output_dir,
+                platform=platform,
+                cookies_file=cookies_file,
+                **config,
+            )
                 
         except Exception as e:
             return {
@@ -64,307 +87,109 @@ class VideoDownloader:
             return 'twitter'
         else:
             return 'general'
-    
-    async def _download_youtube(self, url: str, output_dir: str, cookies_file: str = None) -> Dict:
-        """下载YouTube视频"""
+
+    def _get_platform_download_config(self, platform: str) -> Tuple[str, Dict]:
+        if platform in self.platform_download_configs:
+            return platform, self.platform_download_configs[platform]
+        return 'general', self.platform_download_configs['general']
+
+    def _locate_downloaded_file(self, ydl: yt_dlp.YoutubeDL, info: Dict, output_dir: str) -> Optional[str]:
+        """Locate the file yt-dlp wrote, including non-ASCII titles."""
+        candidates = []
+
+        if info:
+            for key in ("filepath", "_filename"):
+                if info.get(key):
+                    candidates.append(info[key])
+
+            for item in info.get("requested_downloads") or []:
+                for key in ("filepath", "_filename"):
+                    if item.get(key):
+                        candidates.append(item[key])
+
+            try:
+                candidates.append(ydl.prepare_filename(info))
+            except Exception:
+                pass
+
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                return candidate
+
         try:
-            # 增强yt-dlp配置，对抗反爬虫
-            ydl_opts = {
-                'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-                'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',  # 限制质量减少被检测风险
-                'quiet': True,
-                'no_warnings': True,
-                # 反爬虫配置
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'referer': 'https://www.youtube.com/',
-                'sleep_interval': 1,  # 请求间隔
-                'max_sleep_interval': 3,
-                'sleep_interval_subtitles': 1,
-                # 重试配置
-                'retries': 3,
-                'fragment_retries': 3,
-                'skip_unavailable_fragments': True,
-                # 网络配置
-                'socket_timeout': 30,
-                'http_chunk_size': 10485760,  # 10MB chunks
-                # cookies配置
-                'cookiefile': cookies_file if cookies_file else None,
-                # 自动从浏览器获取cookies（如果没有提供cookies文件）
-                'cookiesfrombrowser': ('chrome',) if not cookies_file else None,
-                # 额外的反检测配置
-                'extractor_args': {
-                    'youtube': {
-                        'skip': ['hls', 'dash'],  # 跳过复杂格式
-                        'player_skip': ['js'],   # 跳过JS解析
+            files = [
+                os.path.join(output_dir, file)
+                for file in os.listdir(output_dir)
+                if not file.endswith((".part", ".ytdl", ".temp"))
+            ]
+            files = [file for file in files if os.path.isfile(file)]
+            files.sort(key=os.path.getmtime, reverse=True)
+            return files[0] if files else None
+        except Exception:
+            return None
+
+    def _build_ytdlp_options(
+        self,
+        output_dir: str,
+        fmt: str,
+        cookies_file: str = None,
+        extra_opts: Optional[Dict] = None
+    ) -> Dict:
+        opts = {
+            'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
+            'format': fmt,
+            'quiet': True,
+            'no_warnings': True,
+            'cookiefile': cookies_file if cookies_file else None,
+        }
+        if extra_opts:
+            opts.update(extra_opts)
+        return opts
+
+    async def _download_with_ytdlp(
+        self,
+        url: str,
+        output_dir: str,
+        platform: str,
+        fmt: str = 'best[ext=mp4]/best',
+        cookies_file: str = None,
+        extra_opts: Optional[Dict] = None,
+        fallback_to_http: bool = False
+    ) -> Dict:
+        """Shared yt-dlp download flow for supported platforms."""
+        try:
+            ydl_opts = self._build_ytdlp_options(output_dir, fmt, cookies_file, extra_opts)
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                title = info.get('title', 'unknown_title')
+
+                ydl.download([url])
+                downloaded_file = self._locate_downloaded_file(ydl, info, output_dir)
+
+                if downloaded_file and os.path.exists(downloaded_file):
+                    return {
+                        "success": True,
+                        "file_path": downloaded_file,
+                        "title": title,
+                        "duration": info.get('duration'),
+                        "platform": platform
                     }
+
+                return {
+                    "success": False,
+                    "error": "下载完成但找不到文件",
+                    "file_path": None
                 }
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # 获取视频信息
-                info = ydl.extract_info(url, download=False)
-                title = info.get('title', 'unknown_title')
-                
-                # 下载视频
-                ydl.download([url])
-                
-                # 查找下载的文件
-                downloaded_file = None
-                for file in os.listdir(output_dir):
-                    if title.lower().replace(' ', '_') in file.lower() or 'unknown_title' in file:
-                        downloaded_file = os.path.join(output_dir, file)
-                        break
-                
-                if downloaded_file and os.path.exists(downloaded_file):
-                    return {
-                        "success": True,
-                        "file_path": downloaded_file,
-                        "title": title,
-                        "duration": info.get('duration'),
-                        "platform": "youtube"
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": "下载完成但找不到文件",
-                        "file_path": None
-                    }
-                    
+
         except Exception as e:
+            if fallback_to_http:
+                return await self._download_direct_http(url, output_dir, cookies_file)
             return {
                 "success": False,
-                "error": f"YouTube下载失败: {str(e)}",
+                "error": f"{platform}下载失败: {str(e)}",
                 "file_path": None
             }
-    
-    async def _download_bilibili(self, url: str, output_dir: str, cookies_file: str = None) -> Dict:
-        """下载B站视频"""
-        try:
-            # 使用yt-dlp下载B站视频
-            ydl_opts = {
-                'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-                'format': 'best',  # 改为best，不限制格式
-                'quiet': True,
-                'no_warnings': True,
-                'cookies': cookies_file
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                title = info.get('title', 'unknown_title')
-                
-                ydl.download([url])
-                
-                # 查找下载的文件
-                downloaded_file = None
-                for file in os.listdir(output_dir):
-                    if title.lower().replace(' ', '_') in file.lower() or 'unknown_title' in file:
-                        downloaded_file = os.path.join(output_dir, file)
-                        break
-                
-                if downloaded_file and os.path.exists(downloaded_file):
-                    return {
-                        "success": True,
-                        "file_path": downloaded_file,
-                        "title": title,
-                        "duration": info.get('duration'),
-                        "platform": "bilibili"
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": "下载完成但找不到文件",
-                        "file_path": None
-                    }
-                    
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"B站下载失败: {str(e)}",
-                "file_path": None
-            }
-    
-    async def _download_tiktok(self, url: str, output_dir: str, cookies_file: str = None) -> Dict:
-        """下载TikTok视频"""
-        try:
-            ydl_opts = {
-                'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-                'format': 'best[ext=mp4]/best',
-                'quiet': True,
-                'no_warnings': True,
-                'cookies': cookies_file
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                title = info.get('title', 'unknown_title')
-                
-                ydl.download([url])
-                
-                # 查找下载的文件
-                downloaded_file = None
-                for file in os.listdir(output_dir):
-                    if title.lower().replace(' ', '_') in file.lower() or 'unknown_title' in file:
-                        downloaded_file = os.path.join(output_dir, file)
-                        break
-                
-                if downloaded_file and os.path.exists(downloaded_file):
-                    return {
-                        "success": True,
-                        "file_path": downloaded_file,
-                        "title": title,
-                        "duration": info.get('duration'),
-                        "platform": "tiktok"
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": "下载完成但找不到文件",
-                        "file_path": None
-                    }
-                    
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"TikTok下载失败: {str(e)}",
-                "file_path": None
-            }
-    
-    async def _download_instagram(self, url: str, output_dir: str, cookies_file: str = None) -> Dict:
-        """下载Instagram视频"""
-        try:
-            ydl_opts = {
-                'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-                'format': 'best[ext=mp4]/best',
-                'quiet': True,
-                'no_warnings': True,
-                'cookies': cookies_file
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                title = info.get('title', 'unknown_title')
-                
-                ydl.download([url])
-                
-                # 查找下载的文件
-                downloaded_file = None
-                for file in os.listdir(output_dir):
-                    if title.lower().replace(' ', '_') in file.lower() or 'unknown_title' in file:
-                        downloaded_file = os.path.join(output_dir, file)
-                        break
-                
-                if downloaded_file and os.path.exists(downloaded_file):
-                    return {
-                        "success": True,
-                        "file_path": downloaded_file,
-                        "title": title,
-                        "duration": info.get('duration'),
-                        "platform": "instagram"
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": "下载完成但找不到文件",
-                        "file_path": None
-                    }
-                    
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Instagram下载失败: {str(e)}",
-                "file_path": None
-            }
-    
-    async def _download_twitter(self, url: str, output_dir: str, cookies_file: str = None) -> Dict:
-        """下载Twitter视频"""
-        try:
-            ydl_opts = {
-                'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-                'format': 'best[ext=mp4]/best',
-                'quiet': True,
-                'no_warnings': True,
-                'cookies': cookies_file
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                title = info.get('title', 'unknown_title')
-                
-                ydl.download([url])
-                
-                # 查找下载的文件
-                downloaded_file = None
-                for file in os.listdir(output_dir):
-                    if title.lower().replace(' ', '_') in file.lower() or 'unknown_title' in file:
-                        downloaded_file = os.path.join(output_dir, file)
-                        break
-                
-                if downloaded_file and os.path.exists(downloaded_file):
-                    return {
-                        "success": True,
-                        "file_path": downloaded_file,
-                        "title": title,
-                        "duration": info.get('duration'),
-                        "platform": "twitter"
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": "下载完成但找不到文件",
-                        "file_path": None
-                    }
-                    
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Twitter下载失败: {str(e)}",
-                "file_path": None
-            }
-    
-    async def _download_general(self, url: str, output_dir: str, cookies_file: str = None) -> Dict:
-        """通用视频下载"""
-        try:
-            # 尝试使用yt-dlp下载
-            ydl_opts = {
-                'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-                'format': 'best[ext=mp4]/best',
-                'quiet': True,
-                'no_warnings': True,
-                'cookies': cookies_file
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                title = info.get('title', 'unknown_title')
-                
-                ydl.download([url])
-                
-                # 查找下载的文件
-                downloaded_file = None
-                for file in os.listdir(output_dir):
-                    if title.lower().replace(' ', '_') in file.lower() or 'unknown_title' in file:
-                        downloaded_file = os.path.join(output_dir, file)
-                        break
-                
-                if downloaded_file and os.path.exists(downloaded_file):
-                    return {
-                        "success": True,
-                        "file_path": downloaded_file,
-                        "title": title,
-                        "duration": info.get('duration'),
-                        "platform": "general"
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": "下载完成但找不到文件",
-                        "file_path": None
-                    }
-                    
-        except Exception as e:
-            # 如果yt-dlp失败，尝试直接HTTP下载
-            return await self._download_direct_http(url, output_dir, cookies_file)
     
     async def _download_direct_http(self, url: str, output_dir: str, cookies_file: str = None) -> Dict:
         """直接HTTP下载"""
@@ -571,4 +396,4 @@ if __name__ == "__main__":
     
     # 运行下载器测试
     print("\n" + "=" * 60)
-    asyncio.run(test_downloader()) 
+    asyncio.run(test_downloader())

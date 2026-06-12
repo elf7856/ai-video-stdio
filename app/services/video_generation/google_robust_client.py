@@ -9,6 +9,7 @@ import time
 import os
 from typing import Optional, Dict, Any
 from ...core.config import settings
+from app.services.google_error_utils import format_google_api_error
 from .base_client import BaseVideoGenerationClient
 from . import VideoGenerationRequest, VideoGenerationResult
 import logging
@@ -48,11 +49,12 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
         return self._client
         
     async def generate_video_with_retry(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         image_path: Optional[str] = None,
         max_retries: int = 3,
-        timeout: int = 300
+        timeout: int = 300,
+        duration: float = 8.0
     ) -> Dict[str, Any]:
         """
         生成视频，包含重试机制
@@ -60,12 +62,25 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
         for attempt in range(max_retries):
             try:
                 logger.info(f"🎬 尝试 {attempt + 1}/{max_retries}: 生成视频")
-                result = await self._generate_video_single_attempt(prompt, image_path, timeout)
+                result = await self._generate_video_single_attempt(prompt, image_path, timeout, duration)
                 return result
                 
             except Exception as e:
                 error_msg = str(e)
-                logger.warning(f"⚠️ 尝试 {attempt + 1} 失败: {error_msg}")
+                logger.warning(
+                    "⚠️ Google Veo 调用失败详情: %s",
+                    format_google_api_error(
+                        e,
+                        {
+                            "model": "veo-3.1-fast-generate-001",
+                            "provider": "Vertex AI" if getattr(self, "project_id", None) else "AI Studio",
+                            "project_id": getattr(self, "project_id", None),
+                            "location": getattr(self, "location", None),
+                            "attempt": attempt + 1,
+                            "max_retries": max_retries,
+                        },
+                    ),
+                )
                 
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 10  # 递增等待时间
@@ -80,14 +95,17 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
                     }
     
     async def _generate_video_single_attempt(
-        self, 
-        prompt: str, 
-        image_path: Optional[str] = None, 
-        timeout: int = 300
+        self,
+        prompt: str,
+        image_path: Optional[str] = None,
+        timeout: int = 300,
+        duration: float = 8.0
     ) -> Dict[str, Any]:
         """单次视频生成尝试"""
         try:
-            logger.info(f"📝 提示词: {prompt[:50]}...")
+            # Veo 支持 5-8 秒，clamp 到合法范围
+            duration_seconds = max(5, min(8, int(round(duration))))
+            logger.info(f"📝 提示词: {prompt[:50]}... | 时长: {duration_seconds}s")
             
             # 使用缓存的客户端实例
             client = self.client
@@ -122,38 +140,44 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
 
             if image_path:
                 if os.path.exists(image_path):
-                    logger.info(f"📸 发现参考图，正在上传到 Google Cloud: {image_path}")
+                    logger.info(f"📸 发现参考图，读取为 image_bytes: {image_path}")
                     try:
-                        # 上传图片到 Google AI SDK 文件系统
-                        uploaded_file = client.files.upload(path=image_path)
-                        input_image = uploaded_file
-                        logger.info(f"✅ 图片上传完成: {uploaded_file.name}")
+                        import imghdr
+                        with open(image_path, 'rb') as f:
+                            img_bytes = f.read()
+                        ext = os.path.splitext(image_path)[1].lower()
+                        mime = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/png"
+                        input_image = genai.types.Image(image_bytes=img_bytes, mime_type=mime)  # type: ignore
+                        logger.info(f"✅ 参考图已读取: {len(img_bytes)} bytes, {mime}")
                     except Exception as upload_err:
-                        error_msg = f"图片上传失败: {upload_err}"
+                        error_msg = f"图片读取失败: {upload_err}"
                         logger.error(error_msg)
-                        raise ValueError(error_msg) # 强制失败，触发重试
+                        raise ValueError(error_msg)
                 else:
                     error_msg = f"参考图路径不存在: {image_path} (当前目录: {os.getcwd()})"
                     logger.error(error_msg)
-                    raise FileNotFoundError(error_msg) # 强制失败，触发重试
+                    raise FileNotFoundError(error_msg)
 
             # 如果使用了临时文件，可以考虑清理，或者保留用于调试
             # if temp_image_path and os.path.exists(temp_image_path):
             #    os.remove(temp_image_path)
 
             # 提交视频生成任务
+            video_config = genai.types.GenerateVideosConfig(duration_seconds=duration_seconds)  # type: ignore
             if input_image:
-                logger.info("🚀 启动 Image-to-Video 渲染模式")
+                logger.info(f"🚀 启动 Image-to-Video 渲染模式 ({duration_seconds}s)")
                 operation = client.models.generate_videos(
-                    model="veo-3.1-fast-generate-preview",
+                    model="veo-3.1-fast-generate-001",
                     prompt=prompt,
-                    image=input_image,  # 传入图片对象
+                    image=input_image,
+                    config=video_config,
                 )
             else:
-                logger.info("🚀 启动 Text-to-Video 渲染模式")
+                logger.info(f"🚀 启动 Text-to-Video 渲染模式 ({duration_seconds}s)")
                 operation = client.models.generate_videos(
-                    model="veo-3.1-fast-generate-preview",
+                    model="veo-3.1-fast-generate-001",
                     prompt=prompt,
+                    config=video_config,
                 )
             
             task_id = operation.name
@@ -220,7 +244,13 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
                     
                 except Exception as poll_error:
                     # 轮询错误，但不立即失败，而是重试
-                    logger.warning(f"⚠️ 轮询异常: {str(poll_error)}")
+                    logger.warning(
+                        "⚠️ Google Veo 轮询异常详情: %s",
+                        format_google_api_error(
+                            poll_error,
+                            {"model": "veo-3.1-fast-generate-001", "provider": "AI Studio", "task_id": task_id},
+                        ),
+                    )
                     await asyncio.sleep(10)  # 等待10秒后继续
                     continue
             
@@ -232,7 +262,10 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
             }
             
         except Exception as e:
-            logger.error(f"❌ 生成视频异常: {str(e)}")
+            logger.error(
+                "❌ Google Veo 生成视频异常详情: %s",
+                format_google_api_error(e, {"model": "veo-3.1-fast-generate-001", "provider": "AI Studio"}),
+            )
             raise
     
     async def _download_video_safe(self, client, generated_video, task_id: str) -> Dict[str, Any]:
@@ -323,7 +356,8 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
                 prompt=request.prompt,
                 image_path=request.image_path,
                 max_retries=3,
-                timeout=300
+                timeout=300,
+                duration=request.duration
             )
             
             generation_time = time.time() - start_time
@@ -347,7 +381,10 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
                 )
                 
         except Exception as e:
-            logger.error(f"视频生成异常: {str(e)}")
+            logger.error(
+                "视频生成异常详情: %s",
+                format_google_api_error(e, {"model": "veo-3.1-fast-generate-001"}),
+            )
             return VideoGenerationResult(
                 success=False,
                 error_message=str(e)
@@ -359,7 +396,7 @@ class RobustGoogleVideoClient(BaseVideoGenerationClient):
         # 这里返回基于官方文档和实际测试的信息
         return {
             "provider": "Google Gemini Veo 3.1 Fast",
-            "model": "veo-3.1-fast-generate-preview",
+            "model": "veo-3.1-fast-generate-001",
             "max_duration": 8.0,  # 官方文档确认的最大时长
             "resolution": "1280x720",  # 默认分辨率
             "cost_per_second": 0.75,  # 官方定价: $0.75/秒
@@ -405,15 +442,15 @@ class VertexAIVideoClient(RobustGoogleVideoClient):
                 raise ValueError("VERTEX_PROJECT_ID 未配置")
 
             try:
+                # SDK 不允许同时传 api_key 和 project/location
+                # project 通过完整 model path 传入 generate_videos 调用
                 if self.api_key:
-                    # Vertex AI Express 模式：只用 api_key
                     self._client = genai.Client(  # type: ignore
                         vertexai=True,
                         api_key=self.api_key,
                     )
-                    logger.info("✅ Vertex AI 视频客户端初始化完成 (api_key 模式)")
+                    logger.info(f"✅ Vertex AI 视频客户端初始化完成 (api_key 模式)")
                 else:
-                    # 标准模式：project + location（需要 ADC）
                     self._client = genai.Client(  # type: ignore
                         vertexai=True,
                         project=self.project_id,
@@ -430,15 +467,18 @@ class VertexAIVideoClient(RobustGoogleVideoClient):
         self,
         prompt: str,
         image_path: Optional[str] = None,
-        timeout: int = 300
+        timeout: int = 300,
+        duration: float = 8.0
     ) -> Dict[str, Any]:
         """使用 Vertex AI 模型生成视频（覆盖父类方法）"""
         try:
-            logger.info(f"📝 提示词: {prompt[:50]}...")
+            duration_seconds = max(5, min(8, int(round(duration))))
+            logger.info(f"📝 提示词: {prompt[:50]}... | 时长: {duration_seconds}s")
             client = self.client
 
-            model_name = "veo-3.1-generate-preview"
-            logger.info(f"🎯 使用模型: {model_name} (Vertex AI)")
+            # 用完整 project path，让 Vertex API key 能正确路由到 Veo
+            model_name = f"projects/{self.project_id}/locations/{self.location}/publishers/google/models/veo-3.1-fast-generate-001"
+            logger.info(f"🎯 使用模型: veo-3.1-fast-generate-001 (Vertex AI)")
 
             # 处理参考图（逻辑与父类一致）
             input_image = None
@@ -463,29 +503,35 @@ class VertexAIVideoClient(RobustGoogleVideoClient):
                     logger.warning(f"下载参考图异常: {dl_err}")
 
             if image_path and os.path.exists(image_path):
-                logger.info(f"📸 上传参考图: {image_path}")
+                logger.info(f"📸 读取参考图 image_bytes: {image_path}")
                 try:
-                    uploaded_file = client.files.upload(path=image_path)
-                    input_image = uploaded_file
-                    logger.info(f"✅ 图片上传完成: {uploaded_file.name}")
+                    with open(image_path, 'rb') as f:
+                        img_bytes = f.read()
+                    ext = os.path.splitext(image_path)[1].lower()
+                    mime = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/png"
+                    input_image = genai.types.Image(image_bytes=img_bytes, mime_type=mime)  # type: ignore
+                    logger.info(f"✅ 参考图已读取: {len(img_bytes)} bytes")
                 except Exception as upload_err:
-                    raise ValueError(f"图片上传失败: {upload_err}")
+                    raise ValueError(f"图片读取失败: {upload_err}")
             elif image_path:
                 raise FileNotFoundError(f"参考图路径不存在: {image_path}")
 
             # 提交生成任务
+            video_config = genai.types.GenerateVideosConfig(duration_seconds=duration_seconds)  # type: ignore
             if input_image:
-                logger.info("🚀 启动 Image-to-Video (Vertex AI)")
+                logger.info(f"🚀 启动 Image-to-Video (Vertex AI, {duration_seconds}s)")
                 operation = client.models.generate_videos(
                     model=model_name,
                     prompt=prompt,
                     image=input_image,
+                    config=video_config,
                 )
             else:
-                logger.info("🚀 启动 Text-to-Video (Vertex AI)")
+                logger.info(f"🚀 启动 Text-to-Video (Vertex AI, {duration_seconds}s)")
                 operation = client.models.generate_videos(
                     model=model_name,
                     prompt=prompt,
+                    config=video_config,
                 )
 
             task_id = operation.name
@@ -501,6 +547,19 @@ class VertexAIVideoClient(RobustGoogleVideoClient):
                     current_operation = client.operations.get(operation)
                     if current_operation.done:
                         if hasattr(current_operation, 'error') and current_operation.error:
+                            logger.error(
+                                "❌ Vertex AI Veo operation error: %s",
+                                format_google_api_error(
+                                    Exception(str(current_operation.error)),
+                                    {
+                                        "model": "veo-3.1-fast-generate-001",
+                                        "model_path": model_name,
+                                        "project_id": self.project_id,
+                                        "location": self.location,
+                                        "task_id": task_id,
+                                    },
+                                ),
+                            )
                             return {"status": "failed", "error": str(current_operation.error), "task_id": task_id}
 
                         if (hasattr(current_operation, 'response') and
@@ -522,19 +581,41 @@ class VertexAIVideoClient(RobustGoogleVideoClient):
                     await asyncio.sleep(current_interval)
                     interval_index += 1
                 except Exception as poll_error:
-                    logger.warning(f"轮询异常: {poll_error}")
+                    logger.warning(
+                        "Vertex AI Veo 轮询异常详情: %s",
+                        format_google_api_error(
+                            poll_error,
+                            {
+                                "model": "veo-3.1-fast-generate-001",
+                                "model_path": model_name,
+                                "project_id": self.project_id,
+                                "location": self.location,
+                                "task_id": task_id,
+                            },
+                        ),
+                    )
                     await asyncio.sleep(10)
 
             return {"status": "timeout", "task_id": task_id, "elapsed_time": time.time() - start_time}
 
         except Exception as e:
-            logger.error(f"❌ Vertex AI 生成视频异常: {e}")
+            logger.error(
+                "❌ Vertex AI 生成视频异常详情: %s",
+                format_google_api_error(
+                    e,
+                    {
+                        "model": "veo-3.1-fast-generate-001",
+                        "project_id": self.project_id,
+                        "location": self.location,
+                    },
+                ),
+            )
             raise
 
     def get_capabilities(self) -> Dict[str, Any]:
         return {
             "provider": "Google Vertex AI Veo",
-            "model": "veo-3.1-generate-preview",
+            "model": "veo-3.1-fast-generate-001",
             "max_duration": 8.0,
             "resolution": "1280x720",
             "cost_per_second": 0.75,

@@ -135,7 +135,9 @@ class GenerationStrategyAgent:
         logger.info(f"✅ LLM 分析完成:")
         logger.info(f"   任务类型: {analysis.get('task_type')}")
         logger.info(f"   推荐策略: {analysis.get('strategy')}")
-        logger.info(f"   置信度: {analysis.get('confidence', 0):.0%}")
+        raw_confidence = float(analysis.get("confidence", 0) or 0)
+        display_confidence = raw_confidence / 100.0 if raw_confidence > 1 else raw_confidence
+        logger.info(f"   置信度: {display_confidence:.0%}")
 
         # 2. 构建决策结果
         decision = self._build_decision(analysis, config)
@@ -385,8 +387,10 @@ class GenerationStrategyAgent:
         # 生成执行步骤
         steps = self._generate_steps(strategy, analysis)
 
-        # 提取置信度
-        confidence = analysis.get("confidence", 0) / 100.0
+        # 提取置信度：LLM prompt 要求 0-100，但这里兼容 0-1 的返回
+        confidence_raw = float(analysis.get("confidence", 0) or 0)
+        confidence = confidence_raw / 100.0 if confidence_raw > 1 else confidence_raw
+        confidence = max(0.0, min(1.0, confidence))
 
         return StrategyDecision(
             strategy=strategy,

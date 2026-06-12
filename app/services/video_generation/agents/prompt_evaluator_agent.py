@@ -3,6 +3,7 @@ PromptEvaluatorAgent - Prompt 评估 Agent
 负责前置评估分镜 prompt 质量，预测生成难度，提供优化建议
 """
 
+import asyncio
 import logging
 import json
 import re
@@ -127,22 +128,39 @@ class PromptEvaluatorAgent:
         """
         logger.info(f"🔍 Prompt评估Agent开始评估 {len(storyboard)} 个镜头...")
 
-        # 1. 评估每个镜头
-        shot_evaluations = []
-        for shot in storyboard:
-            evaluation = await self._evaluate_single_shot(
-                shot=shot,
-                visual_style_guide=visual_style_guide,
-                characters=characters
-            )
-            shot_evaluations.append(evaluation)
+        # 1. 限速并行评估（最多 2 个同时，避免 Vertex AI 限流）
+        semaphore = asyncio.Semaphore(2)
 
-        # 2. 一致性检查
-        consistency_check = await self._check_consistency(
-            storyboard=storyboard,
-            visual_style_guide=visual_style_guide,
-            characters=characters
+        async def _evaluate_with_limit(shot):
+            async with semaphore:
+                return await self._evaluate_single_shot(shot=shot, visual_style_guide=visual_style_guide, characters=characters)
+
+        shot_eval_tasks = [_evaluate_with_limit(shot) for shot in storyboard]
+        consistency_task = self._check_consistency(
+            storyboard=storyboard, visual_style_guide=visual_style_guide, characters=characters
         )
+        results = await asyncio.gather(*shot_eval_tasks, consistency_task, return_exceptions=True)
+
+        shot_evaluations = []
+        for i, r in enumerate(results[:-1]):
+            if isinstance(r, Exception):
+                shot = storyboard[i]
+                logger.warning(f"镜头 {shot.get('sequence', i+1)} 评估失败，使用默认值: {r}")
+                shot_evaluations.append(ShotEvaluation(
+                    shot_id=shot.get("sequence", i+1), prompt=shot.get("prompt", ""),
+                    quality_score=0.5, quality_level=PromptQualityLevel.FAIR,
+                    complexity=ComplexityLevel.MEDIUM, predicted_success_rate=0.5,
+                    issues=[], strengths=[], suggestions=[]
+                ))
+            else:
+                shot_evaluations.append(r)
+
+        consistency_result = results[-1]
+        if isinstance(consistency_result, Exception):
+            logger.warning(f"一致性检查失败，使用默认值: {consistency_result}")
+            consistency_check = ConsistencyCheck(is_consistent=True, consistency_score=0.8, issues=[], suggestions=[])
+        else:
+            consistency_check = consistency_result
 
         # 3. 全局分析
         overall_quality = sum(e.quality_score for e in shot_evaluations) / len(shot_evaluations)
@@ -237,10 +255,11 @@ class PromptEvaluatorAgent:
         )
 
         try:
-            # 调用 LLM 评估
-            response = self.llm.call(
+            # 调用 LLM 评估（同步函数用 asyncio.to_thread 包装，避免阻塞 event loop）
+            response = await asyncio.to_thread(
+                self.llm.call,
                 messages=[{"role": "user", "content": evaluation_prompt}],
-                temperature=0.3  # 较低温度以获得稳定评估
+                temperature=0.3
             )
 
             # 解析评估结果
@@ -456,7 +475,8 @@ class PromptEvaluatorAgent:
         )
 
         try:
-            response = self.llm.call(
+            response = await asyncio.to_thread(
+                self.llm.call,
                 messages=[{"role": "user", "content": consistency_prompt}],
                 temperature=0.3
             )
@@ -570,177 +590,141 @@ class PromptEvaluatorAgent:
         image_prompt: str,
         duration: float,
         visual_style_guide: Dict[str, str],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        has_reference_image: bool = True,
+        scene_context: Optional[Dict[str, str]] = None,
+        characters_in_shot: Optional[List[str]] = None,
+        previous_shot_summary: Optional[str] = None,
+        transition: Optional[str] = None,
     ) -> str:
         """
-        将静态图片prompt转换为动态视频prompt
+        将分镜 prompt 转换为 Veo 最优化的视频生成 prompt。
+
+        关键前提：Veo 已有首帧参考图，因此 prompt 应聚焦于描述
+        "发生了什么运动"，而非重复描述画面外观。
 
         Args:
-            image_prompt: 原始图片prompt（静态描述）
-            duration: 视频时长（秒）
+            image_prompt: 原始分镜 prompt
+            duration: 视频时长（秒，≤8）
             visual_style_guide: 视觉风格指南
-            context: 额外上下文信息（如场景类型、情绪等）
-
-        Returns:
-            转换后的视频prompt（包含运动和时间维度）
+            context: 额外上下文
+            has_reference_image: 是否已有首帧参考图（影响 prompt 策略）
+            scene_context: bible 中的场景上下文 {location, time_of_day, mood}
+            characters_in_shot: 本镜头出现的角色名（来自 bible.shot.characters_in_shot）
+            previous_shot_summary: 上一镜头的简短描述，仅在 transition=continuous/match_cut 时使用
+            transition: "cut" | "match_cut" | "continuous"，决定 prompt 是否承接上一镜头
         """
-        logger.info(f"🎬 将图片prompt转换为视频prompt (时长: {duration}s)...")
+        logger.info(f"🎬 生成 Veo 优化视频 prompt (时长: {duration}s)...")
 
-        # 视觉风格
-        style_info = "\n**视觉风格指南**:\n"
-        for key, value in visual_style_guide.items():
-            style_info += f"- {key}: {value}\n"
+        # 视觉风格关键词（简洁提取）
+        style_keywords = ", ".join(v for v in visual_style_guide.values() if v)
 
-        # 上下文信息
-        context_info = ""
-        if context:
-            context_info = "\n**上下文信息**:\n"
-            for key, value in context.items():
-                context_info += f"- {key}: {value}\n"
+        # 时长对应的节奏风格
+        pacing = "quick and dynamic" if duration <= 4 else ("smooth and cinematic" if duration <= 8 else "slow and contemplative")
 
-        conversion_prompt = f"""你是一位专业的视频生成prompt专家。请将以下静态图片prompt转换为适合视频生成的动态prompt。
+        # 关键前提提示：Veo 已有首帧图，prompt 重点是"运动"而非外观
+        ref_image_note = (
+            "IMPORTANT: A reference image (first frame) is already provided to the video model. "
+            "Do NOT re-describe the visual appearance in detail. Focus ONLY on: what moves, how the camera moves, and the mood of movement."
+        ) if has_reference_image else ""
 
-{style_info}
-{context_info}
+        # bible 上下文：scene / characters / transition
+        scene_block = ""
+        if scene_context:
+            parts = []
+            if scene_context.get("location"):
+                parts.append(f"location={scene_context['location']}")
+            if scene_context.get("time_of_day"):
+                parts.append(f"time={scene_context['time_of_day']}")
+            if scene_context.get("mood"):
+                parts.append(f"mood={scene_context['mood']}")
+            if parts:
+                scene_block = f"## Scene context: {' | '.join(parts)}\n"
 
-**原始图片Prompt**:
-```
+        characters_block = ""
+        if characters_in_shot:
+            characters_block = f"## Characters present in this shot: {', '.join(characters_in_shot)} (their reference images are already locked into the first frame)\n"
+
+        # transition 指令——这是 bible-aware 的核心
+        transition_block = ""
+        tr = (transition or "cut").lower()
+        if tr == "continuous" and previous_shot_summary:
+            transition_block = (
+                f"## Continuity: This shot is a CONTINUOUS take from the previous shot. "
+                f"Begin where the previous shot ended.\n"
+                f"## Previous shot was: {previous_shot_summary[:200]}\n"
+                f"## Action requirement: pick up the motion smoothly, no scene change, no character change.\n"
+            )
+        elif tr == "match_cut" and previous_shot_summary:
+            transition_block = (
+                f"## Continuity: MATCH CUT — composition or motion echoes the previous shot across a cut.\n"
+                f"## Previous shot was: {previous_shot_summary[:200]}\n"
+                f"## Action requirement: design motion or framing that visually rhymes with the previous shot.\n"
+            )
+        else:
+            # cut（默认）：不承接，独立运动设计
+            transition_block = "## Continuity: CUT — this is an independent shot, no need to continue previous motion.\n"
+
+        conversion_prompt = f"""You are an expert at writing prompts for Google Veo video generation model.
+
+{ref_image_note}
+
+{scene_block}{characters_block}{transition_block}
+## Shot description (source material):
 {image_prompt}
-```
 
-**视频时长**: {duration}秒
+## Target duration: {duration:.1f} seconds ({pacing})
+## Visual style: {style_keywords}
 
-**转换要求**:
+## Your task:
+Write a single, fluent English video prompt optimized for Veo. Follow this structure exactly:
 
-1. **保留核心视觉元素**
-   - 保留主体描述（人物、物体、产品等）
-   - 保留环境描述（场景、背景、氛围）
-   - 保留光影描述（lighting, shadows, highlights）
-   - 保留色彩描述（color palette, tones）
-   - 保留视觉风格（风格、质感、调性）
-   - 保留视觉风格指南中的关键词
+[Subject + brief key appearance] + [subject's action/motion during the shot] + [camera movement] + [lighting/atmosphere] + [cinematic style keywords]
 
-2. **添加动态元素**
-   - 添加合适的镜头运动（camera movement）：
-     * 产品/物体: slowly rotating, gentle push in, smooth pan around
-     * 人物: slow zoom in, subtle dolly, tracking shot
-     * 风景: sweeping pan, crane shot, aerial movement
-     * 静态场景: subtle camera drift, gentle push in
-   - 添加主体动作（subject motion）：
-     * 人物: natural movements, gestures, expressions
-     * 物体: subtle movements, floating, rotating
-     * 自然元素: wind effects, water flow, light changes
-   - 添加时间维度描述：
-     * 短视频(≤5s): quick, dynamic, energetic
-     * 中等(5-8s): smooth, flowing, cinematic
-     * 长视频(>8s): slow, contemplative, immersive
+## Rules:
+- Output ONLY the final prompt text, no JSON, no explanation, no labels
+- Max 80 words — Veo performs best with concise, focused prompts
+- Camera movement must be specific: e.g. "slow push in", "smooth orbit right", "handheld track", "static locked-off", NOT vague "camera moves"
+- Subject motion must be specific: e.g. "turns her head slowly", "petals fall gently", NOT "moves naturally"
+- End with 2-3 cinematic quality tags: e.g. "cinematic, 4K, film grain" or "photorealistic, soft bokeh, golden hour"
+- Remove any photography-only terms: "sharp focus", "8K photo", "product photography", "still image"
+- If reference image is provided, skip lengthy appearance description — the model can see it
+- If continuity instruction above says CONTINUOUS, the opening motion must align with how the previous shot ended; do NOT introduce a new establishing action.
+- If continuity instruction above says CUT, design a self-contained motion arc for this shot.
 
-3. **优化视频生成关键词**
-   - 添加运动质量关键词：smooth motion, fluid movement, cinematic flow
-   - 添加时间关键词：slow motion, real-time, time-lapse（根据需要）
-   - 添加视频技术关键词：4K video, high frame rate, professional cinematography
-   - 移除纯图片关键词：static composition, still frame, photograph
+## Examples of good Veo prompts:
+- "A dancer in flowing white dress slowly raises her arms, camera orbits around her in a smooth arc, soft backlit sunset glow, cinematic slow motion, film grain"
+- "Close-up of hands turning the watch face, subtle push in toward the dial, cool studio rim lighting, photorealistic, 4K, shallow depth of field"
+- "Mountain valley at dawn, wisps of morning fog drift across pine trees, locked-off wide shot with subtle breathing motion, golden hour light rays, cinematic, anamorphic lens"
 
-4. **根据内容类型优化**
-   - 产品展示: 强调360度展示、细节特写、光影变化
-   - 人物场景: 强调自然动作、情绪表达、环境互动
-   - 风景场景: 强调大气运动、光影变化、空间感
-   - 抽象/艺术: 强调流动感、变化、视觉冲击
-
-5. **保持视觉一致性**
-   - 确保添加的运动不会破坏原有的构图和美感
-   - 运动应该增强而不是干扰主体
-   - 保持与视觉风格指南的一致性
-
-**输出格式 - JSON**:
-```json
-{{
-  "video_prompt": "转换后的视频生成prompt（英文）",
-  "added_camera_movement": "添加的镜头运动描述",
-  "added_subject_motion": "添加的主体动作描述",
-  "added_temporal_elements": [
-    "添加的时间元素1",
-    "添加的时间元素2"
-  ],
-  "preserved_elements": [
-    "保留的核心元素1",
-    "保留的核心元素2"
-  ],
-  "removed_elements": [
-    "移除的纯图片元素1",
-    "移除的纯图片元素2"
-  ],
-  "motion_intensity": "subtle/moderate/dynamic",
-  "reasoning": "转换理由（简短说明为什么选择这些运动方式）"
-}}
-```
-
-**示例**:
-
-原始图片prompt:
-"A sleek silver smartwatch with blue display, perfectly centered on minimalist white surface, soft studio lighting with blue accent lights, modern tech aesthetic, high-quality product photography, sharp focus, 8K ultra-detailed"
-
-转换后的视频prompt:
-"A sleek silver smartwatch with blue display on minimalist white surface, camera slowly rotating around the watch revealing all angles, soft studio lighting with blue accent lights creating dynamic reflections, modern tech aesthetic, smooth cinematic motion, 4K video quality, professional product cinematography"
-
----
-
-原始图片prompt:
-"Young woman in red dress standing in sunlit garden, golden hour lighting, warm tones, portrait composition, professional photography"
-
-转换后的视频prompt:
-"Young woman in red dress standing in sunlit garden, gentle breeze moving her hair and dress, slow zoom in capturing her natural expression, golden hour lighting with soft shadows, warm tones, cinematic portrait, smooth camera movement, 4K video"
-
-请开始转换！
-"""
+Now write the Veo prompt:"""
 
         try:
-            response = self.llm.call(
+            response = await asyncio.to_thread(
+                self.llm.call,
                 messages=[{"role": "user", "content": conversion_prompt}],
-                temperature=0.4  # 稍高温度以获得更有创意的运动描述
+                temperature=0.5
             )
 
-            # 解析响应
-            result = self._parse_evaluation_response(response["content"])
-            video_prompt = result["video_prompt"]
+            video_prompt = response["content"].strip()
+            # 清理可能的多余前缀（如 LLM 加的 "Here is the prompt:" 等）
+            for prefix in ["Here is", "Here's", "Video prompt:", "Prompt:", "Output:"]:
+                if video_prompt.startswith(prefix):
+                    video_prompt = video_prompt.split(":", 1)[-1].strip()
 
-            logger.info(f"✅ 视频prompt转换完成")
-            logger.debug(f"   原始图片: {image_prompt[:80]}...")
-            logger.debug(f"   转换视频: {video_prompt[:80]}...")
-            logger.debug(f"   镜头运动: {result.get('added_camera_movement', 'N/A')}")
-            logger.debug(f"   运动强度: {result.get('motion_intensity', 'N/A')}")
-
+            logger.info(f"✅ Veo prompt 生成完成: {video_prompt[:80]}...")
             return video_prompt
 
         except Exception as e:
-            logger.error(f"转换视频prompt失败: {e}")
-            # 降级方案：简单添加基础运动描述
-            fallback_prompt = image_prompt
-
-            # 移除纯图片关键词
-            image_keywords = [
-                r'static composition',
-                r'still frame',
-                r'photograph(y)?',
-                r'photo shot',
-                r'perfectly centered',
-                r'sharp focus'
-            ]
-            for pattern in image_keywords:
-                fallback_prompt = re.sub(pattern, '', fallback_prompt, flags=re.IGNORECASE)
-
-            # 添加基础运动描述
-            if duration <= 5:
-                motion = "smooth camera movement, dynamic motion"
-            elif duration <= 8:
-                motion = "slow cinematic camera movement, fluid motion"
-            else:
-                motion = "gentle camera drift, contemplative motion"
-
-            fallback_prompt = f"{fallback_prompt.strip()}, {motion}, 4K video quality"
-
-            logger.warning(f"使用降级方案生成视频prompt")
-            return fallback_prompt.strip()
+            logger.error(f"Veo prompt 生成失败: {e}")
+            # 降级：直接用原 prompt 清理静态关键词后追加运动描述
+            fallback = re.sub(
+                r'\b(static composition|still frame|photograph[y]?|photo shot|perfectly centered|sharp focus|product photography|8[Kk] (?:photo|image))\b',
+                '', image_prompt, flags=re.IGNORECASE
+            ).strip().rstrip(',')
+            motion = "slow push in, smooth cinematic motion" if duration <= 5 else "gentle camera drift, fluid cinematic movement"
+            logger.warning("使用降级方案生成 Veo prompt")
+            return f"{fallback}, {motion}, 4K cinematic"
 
     async def generate_image_prompt_from_video_prompt(
         self,
@@ -838,7 +822,8 @@ class PromptEvaluatorAgent:
 """
 
         try:
-            response = self.llm.call(
+            response = await asyncio.to_thread(
+                self.llm.call,
                 messages=[{"role": "user", "content": conversion_prompt}],
                 temperature=0.3
             )

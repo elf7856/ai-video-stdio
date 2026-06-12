@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional
 from PIL import Image
 
 from .base import BaseLLMAdapter
+from app.services.google_error_utils import format_google_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +26,8 @@ class GoogleAdapter(BaseLLMAdapter):
     def _setup(self) -> None:
         """初始化Google Gemini客户端"""
         try:
-            # 获取API密钥
             from app.core.config import settings
-            api_key = settings.google_api_key
-            if not api_key:
-                logger.error("未找到google_api_key配置")
-                self.available = False
-                return
-            
+
             # 动态导入Google新版SDK
             try:
                 from google import genai
@@ -41,32 +36,30 @@ class GoogleAdapter(BaseLLMAdapter):
                 self.genai = genai
                 self.types = types
 
-                # 优先使用 Vertex AI（无地区限制）
-                vertex_project = settings.vertex_project_id
-                vertex_location = settings.vertex_location
-                vertex_api_key = settings.vertex_api_key
-
-                if vertex_api_key:
-                    # Vertex AI Express 模式：只用 api_key
+                # 优先用 Vertex AI key，没有则降级到 AI Studio
+                if settings.vertex_api_key:
                     self.client = genai.Client(
                         vertexai=True,
-                        api_key=vertex_api_key,
+                        api_key=settings.vertex_api_key,
                     )
                     logger.info("Google适配器使用 Vertex AI (api_key 模式)")
-                elif vertex_project:
-                    # Vertex AI 标准模式：project + location（需要 ADC）
+                elif settings.vertex_project_id:
                     self.client = genai.Client(
                         vertexai=True,
-                        project=vertex_project,
-                        location=vertex_location,
+                        project=settings.vertex_project_id,
+                        location=settings.vertex_location,
                     )
-                    logger.info(f"Google适配器使用 Vertex AI (project={vertex_project})")
-                else:
-                    self.client = genai.Client(api_key=api_key)
+                    logger.info(f"Google适配器使用 Vertex AI (project={settings.vertex_project_id})")
+                elif settings.google_api_key:
+                    self.client = genai.Client(api_key=settings.google_api_key)
                     logger.info("Google适配器使用 AI Studio")
+                else:
+                    logger.error("未找到任何 Google API 密钥配置")
+                    self.available = False
+                    return
 
                 # 模型配置
-                self.model_name = self.config.get("model", "gemini-2.5-flash-preview-04-17")
+                self.model_name = self.config.get("model", "gemini-3-flash")
                 
                 # 为了兼容性，创建一个model对象的包装器
                 self.model = self._create_model_wrapper()
@@ -193,15 +186,27 @@ class GoogleAdapter(BaseLLMAdapter):
                     }
                     
             except Exception as e:
-                error_msg = str(e)
+                raw_error_msg = str(e)
+                logger.warning(
+                    "Google Gemini 文本调用失败详情: %s",
+                    format_google_api_error(
+                        e,
+                        {
+                            "model": self.model_name,
+                            "attempt": attempt + 1,
+                            "retry_count": retry_count,
+                        },
+                    ),
+                )
+                error_msg = raw_error_msg
                 
                 # 特定错误处理
                 if "quota" in error_msg.lower():
-                    error_msg = "API配额已用完"
+                    error_msg = f"API配额已用完: {raw_error_msg}"
                 elif "permission" in error_msg.lower():
-                    error_msg = "API权限不足"
+                    error_msg = f"API权限不足: {raw_error_msg}"
                 elif "safety" in error_msg.lower():
-                    error_msg = "内容被安全过滤器阻止"
+                    error_msg = f"内容被安全过滤器阻止: {raw_error_msg}"
                 
                 if attempt < retry_count:
                     logger.warning(f"Google API调用失败 (尝试 {attempt + 1}/{retry_count + 1}): {error_msg}")
