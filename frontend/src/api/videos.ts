@@ -2,7 +2,16 @@
  * 视频生成API
  */
 import apiClient from './client';
-import type { VideoGenerationRequest, VideoGenerationTask, Shot } from './types';
+import type {
+  VideoGenerationRequest,
+  VideoGenerationTask,
+  Shot,
+  ProductionBible,
+  StrategyDecision,
+  IntentGenerationRequest,
+  IntentGenerationResponse,
+  SourceMaterial
+} from './types';
 import { getFullUrl } from '../utils/url';
 
 export const videosApi = {
@@ -10,16 +19,28 @@ export const videosApi = {
    * 创建视频生成任务（默认只生成脚本）
    */
   createTask: async (request: VideoGenerationRequest): Promise<{ taskId: string }> => {
+    const isAutopilot = request.generationMode === 'autopilot';
     const response = await apiClient.post<{ success: boolean; taskId: string }>(
       '/api/video-generation/create',
       {
         ...request,
-        autoGenerate: false,  // 默认不自动生成，需要用户确认
-        generateScriptOnly: true  // 只生成脚本和分镜
+        autoGenerate: isAutopilot,
+        generateScriptOnly: !isAutopilot
       }
     );
     // 返回任务ID
     return { taskId: response.data.taskId };
+  },
+
+  /**
+   * 自然语言生成入口：用户输入可包含 URL，后端会先拉取来源并判断是否需要追问。
+   */
+  createFromIntent: async (request: IntentGenerationRequest): Promise<IntentGenerationResponse> => {
+    const response = await apiClient.post<IntentGenerationResponse>(
+      '/api/video-generation/intent',
+      request
+    );
+    return response.data;
   },
 
   /**
@@ -82,6 +103,9 @@ export const videosApi = {
         error?: string;
         createdAt?: string;
         completedAt?: string;
+        bible?: ProductionBible | null;
+        strategyDecision?: StrategyDecision | null;
+        sourceMaterial?: SourceMaterial | null;
       };
     }>(`/api/video-generation/task/${taskId}`);
 
@@ -103,7 +127,10 @@ export const videosApi = {
       narrationAudioPath: taskData?.narrationAudioPath,
       logs: taskData?.logs,  // Map logs
       error: taskData?.error,
-      createdAt: taskData?.createdAt || new Date().toISOString()
+      createdAt: taskData?.createdAt || new Date().toISOString(),
+      bible: taskData?.bible ?? null,
+      strategyDecision: taskData?.strategyDecision ?? null,
+      sourceMaterial: taskData?.sourceMaterial ?? null,
     };
   },
 
@@ -129,7 +156,7 @@ export const videosApi = {
           }
 
           // 检查是否完成
-          if (task.status === 'completed') {
+          if (task.status === 'completed' || task.status === 'partial_success') {
             resolve(task);
             return;
           }

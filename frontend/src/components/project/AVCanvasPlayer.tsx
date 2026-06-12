@@ -20,6 +20,7 @@ interface ShotWithVideo extends Shot {
 
 interface AVCanvasPlayerProps {
     orderedShots: ShotWithVideo[];
+    status?: string;
     // Optional callbacks for parent component integration
     onTimeUpdate?: (time: number) => void;
     onShotChange?: (index: number) => void;
@@ -34,6 +35,7 @@ const formatTime = (seconds: number): string => {
 
 export const AVCanvasPlayer: React.FC<AVCanvasPlayerProps> = ({
     orderedShots,
+    status,
     onTimeUpdate,
     onShotChange,
     onPlayStateChange,
@@ -46,6 +48,7 @@ export const AVCanvasPlayer: React.FC<AVCanvasPlayerProps> = ({
     const hasVideos = orderedShots.length > 0 && orderedShots.some(shot =>
         shot.videoPath || (shot as any).videoData?.videoPath
     );
+    const isWaitingConfirmation = status === 'waiting_confirmation';
 
     // 使用 AVCanvas Hook
     const {
@@ -100,10 +103,12 @@ export const AVCanvasPlayer: React.FC<AVCanvasPlayerProps> = ({
     return (
         <Box sx={{
             flex: 1,
-            bgcolor: '#050505',
+            bgcolor: '#0a0a0a',
             display: 'flex',
             flexDirection: 'column',
-            position: 'relative'
+            position: 'relative',
+            borderLeft: '1px solid #2e2e2e',
+            borderRight: '1px solid #2e2e2e',
         }}>
             {/* AVCanvas 容器 */}
             <Box
@@ -136,10 +141,10 @@ export const AVCanvasPlayer: React.FC<AVCanvasPlayerProps> = ({
                     }}>
                         <CircularProgress size={48} sx={{ color: '#6366f1', mb: 2 }} />
                         <Typography variant="h6" sx={{ color: 'white', mb: 1, fontWeight: 600 }}>
-                            正在生成视频...
+                            {isWaitingConfirmation ? '分镜已准备，等待确认' : '正在生成视频...'}
                         </Typography>
                         <Typography variant="body2" sx={{ color: '#888' }}>
-                            请在右侧查看生成进度
+                            {isWaitingConfirmation ? '请在右侧检查脚本和镜头，然后点击确认生成视频' : '请在右侧查看生成进度'}
                         </Typography>
                     </Box>
                 )}

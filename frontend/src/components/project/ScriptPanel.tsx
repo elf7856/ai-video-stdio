@@ -1,7 +1,9 @@
 import React from 'react';
 import { Box, Paper, Typography, Tabs, Tab, Stack, Button, LinearProgress, CircularProgress } from '@mui/material';
-import { Edit as EditIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import type { Shot, GeneratedVideo } from '../../api/types';
+import { Edit as EditIcon, Delete as DeleteIcon, AutoFixHigh as AIIcon } from '@mui/icons-material';
+import type { Shot, GeneratedVideo, SourceMaterial } from '../../api/types';
+import { AIAssistant } from './AIAssistant';
+import SourceReviewPanel from '../SourceReviewPanel';
 
 interface ShotWithVideo extends Shot {
     videoData?: Shot | GeneratedVideo;
@@ -19,36 +21,54 @@ interface ProjectData {
     status?: string;
     progress?: number;
     logs?: Array<{ timestamp: string; level: string; message: string }>;
+    sourceMaterial?: SourceMaterial | null;
+}
+
+interface Operation {
+    type: string;
+    shot_index?: number;
+    changes?: { prompt?: string; duration?: number; shotType?: string };
+    new_order?: number[];
+    script?: string;
 }
 
 interface ScriptPanelProps {
     projectData: ProjectData | null;
     currentShot: ShotWithVideo | undefined;
     currentShotIndex: number;
+    orderedShots: ShotWithVideo[];
     activeTab: number;
     onTabChange: (value: number) => void;
     onEditShot: (index: number) => void;
     onDeleteShot: (index: number) => void;
     onConfirmGeneration?: () => void;
-    width?: number;
+    onApplyAIOperations?: (operations: Operation[]) => void;
+    confirmingGeneration?: boolean;
+    width?: number | string;
 }
 
 export const ScriptPanel: React.FC<ScriptPanelProps> = ({
     projectData,
     currentShot,
     currentShotIndex,
+    orderedShots,
     activeTab,
     onTabChange,
     onEditShot,
     onDeleteShot,
     onConfirmGeneration,
-    width = 320,
+    onApplyAIOperations,
+    confirmingGeneration = false,
+    width = '100%',
 }) => {
     // 判断是否正在生成
-    const isGenerating = projectData?.status && ['pending', 'generating_script', 'generating_videos', 'checking_quality', 'merging_videos'].includes(projectData.status);
+    const isGenerating = projectData?.status && ['pending', 'processing', 'generating_script', 'generating', 'generating_videos', 'checking_quality', 'merging_videos', 'generating_narration'].includes(projectData.status);
 
     // 判断是否等待确认
     const isWaitingConfirmation = projectData?.status === 'waiting_confirmation';
+    const failedShots = projectData?.shots?.filter(shot => shot.status === 'failed') || [];
+    const successfulShots = projectData?.shots?.filter(shot => shot.status === 'success' || shot.videoPath) || [];
+    const latestErrorLog = projectData?.logs?.slice().reverse().find(log => log.level === 'error');
 
     // 状态文本映射
     const getStatusText = (status: string): string => {
@@ -59,6 +79,7 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
             'checking_quality': '正在检查质量...',
             'merging_videos': '正在合并视频...',
             'completed': '生成完成',
+            'partial_success': '部分生成完成',
             'failed': '生成失败',
             'cancelled': '已取消'
         };
@@ -69,19 +90,19 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
         <Paper sx={{
             width,
             flexShrink: 0,
-            bgcolor: '#0f0f0f',
-            borderLeft: '1px solid #222',
+            bgcolor: '#161616',
+            borderLeft: '1px solid #2e2e2e',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden'
         }} square>
             <Tabs
-                value={activeTab === 0 ? 0 : activeTab === 1 ? 1 : 2}
+                value={activeTab === 0 ? 0 : activeTab === 1 ? 1 : activeTab === 2 ? 2 : 0}
                 onChange={(_, v) => onTabChange(v)}
                 variant="fullWidth"
                 sx={{
                     minHeight: 48,
-                    borderBottom: '1px solid #222',
+                    borderBottom: '1px solid #2e2e2e',
                     '& .MuiTab-root': { minHeight: 48, fontSize: '0.75rem', color: '#666' },
                     '& .Mui-selected': { color: '#fff' },
                     '& .MuiTabs-indicator': { backgroundColor: '#FF4081' }
@@ -89,17 +110,32 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
             >
                 <Tab label="Script" />
                 <Tab label={isGenerating ? "生成状态" : "Logs"} />
+                <Tab icon={<AIIcon fontSize="small" />} label="AI 助手" iconPosition="start" />
             </Tabs>
 
+            <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            {activeTab === 2 ? (
+                <AIAssistant
+                    taskId={projectData?.taskId || ''}
+                    projectScript={projectData?.script || ''}
+                    orderedShots={orderedShots}
+                    onApplyOperations={onApplyAIOperations || (() => {})}
+                />
+            ) : (
             <Box sx={{ flex: 1, p: 2, overflowY: 'auto' }}>
                 {activeTab === 0 && (
                     <Box>
                         <Typography variant="subtitle2" fontWeight={700} gutterBottom>
                             Script
                         </Typography>
+                        {projectData?.sourceMaterial && (
+                            <Box sx={{ mb: 2 }}>
+                                <SourceReviewPanel sourceMaterial={projectData.sourceMaterial} compact />
+                            </Box>
+                        )}
                         <Paper sx={{
                             p: 2,
-                            bgcolor: '#1a1a1a',
+                            bgcolor: '#1e1e1e',
                             borderRadius: 1,
                             border: '1px solid #333',
                             minHeight: 150,
@@ -209,7 +245,24 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                 ✓ 视频
                                             </Typography>
                                         )}
+                                        {shot.status === 'failed' && (
+                                            <Typography variant="caption" sx={{
+                                                bgcolor: 'rgba(244,67,54,0.16)',
+                                                color: '#ff8a80',
+                                                px: 1,
+                                                py: 0.3,
+                                                borderRadius: 0.5,
+                                                fontSize: '0.7rem'
+                                            }}>
+                                                生成失败
+                                            </Typography>
+                                        )}
                                     </Stack>
+                                    {shot.status === 'failed' && (
+                                        <Typography variant="caption" color="#ff8a80" sx={{ display: 'block', mt: 1, wordBreak: 'break-word' }}>
+                                            失败原因：{shot.error || '请查看执行日志中的 Google/Veo 错误详情'}
+                                        </Typography>
+                                    )}
                                 </Paper>
                             ))}
                         </Stack>
@@ -221,6 +274,7 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                 variant="contained"
                                 size="large"
                                 onClick={onConfirmGeneration}
+                                disabled={confirmingGeneration}
                                 sx={{
                                     background: 'linear-gradient(45deg, #6366f1, #ec4899)',
                                     color: 'white',
@@ -233,7 +287,7 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                     }
                                 }}
                             >
-                                确认生成视频
+                                {confirmingGeneration ? '正在提交确认...' : '确认生成视频'}
                             </Button>
                         )}
 
@@ -319,6 +373,23 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                         }
                                     }}
                                 />
+                                {projectData?.status === 'partial_success' && (
+                                    <Paper sx={{
+                                        p: 1.25,
+                                        bgcolor: 'rgba(255, 215, 64, 0.08)',
+                                        border: '1px solid rgba(255, 215, 64, 0.35)',
+                                        borderRadius: 1
+                                    }}>
+                                        <Typography variant="caption" color="#ffd740" display="block" fontWeight={700}>
+                                            部分完成：成功 {successfulShots.length}/{projectData?.shots?.length || 0} 个镜头，失败 {failedShots.length} 个
+                                        </Typography>
+                                        {latestErrorLog && (
+                                            <Typography variant="caption" color="#bbb" display="block" sx={{ mt: 0.5, wordBreak: 'break-word' }}>
+                                                最近错误：{latestErrorLog.message}
+                                            </Typography>
+                                        )}
+                                    </Paper>
+                                )}
                             </Stack>
                         </Paper>
 
@@ -426,6 +497,8 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
                         </Paper>
                     </Box>
                 )}
+            </Box>
+            )}
             </Box>
         </Paper>
     );

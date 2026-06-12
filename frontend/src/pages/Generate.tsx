@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -36,18 +36,20 @@ import {
     Business as BusinessIcon,
     Computer as TechIcon,
     LocalCafe as LifeIcon,
-    School as EduIcon,
     TheaterComedy as FunIcon,
-    Store as CommercialIcon,
     Palette as ArtIcon,
     PhotoCamera as DocIcon,
-    Weekend as RelaxIcon,
-    Gavel as SeriousIcon,
     Edit as EditIcon,
     ExpandMore as ExpandMoreIcon,
     Refresh as RefreshIcon,
     ArrowForward as ArrowForwardIcon,
-    Terminal as TerminalIcon
+    Terminal as TerminalIcon,
+    AutoStories as ComicIcon,
+    Link as LinkIcon,
+    Image as ImageIcon,
+    VideoLibrary as VideoIcon,
+    SmartToy as ProducerIcon,
+    Close as CloseIcon
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
@@ -56,24 +58,58 @@ import { getFullUrl } from '../utils/url';
 import type {
     ScriptGenerateRequest,
     ScriptGenerateResponse,
+    NarrationVoice,
     Shot,
-    VideoGenerationTask
+    VideoGenerationTask,
+    SourceMaterial
 } from '../api/types';
 import ShotEditor from '../components/ShotEditor';
 import StoryboardEditor from '../components/StoryboardEditor';
+import BiblePanel from '../components/generate/BiblePanel';
+import SourceReviewPanel from '../components/SourceReviewPanel';
 
 // Style Configuration
 const STYLE_CONFIG: Record<string, { icon: React.ReactNode; gradient: string; color: string }> = {
     '专业': { icon: <BusinessIcon />, gradient: 'linear-gradient(135deg, #2c3e50 0%, #3498db 100%)', color: '#3498db' },
     '科技': { icon: <TechIcon />, gradient: 'linear-gradient(135deg, #000428 0%, #004e92 100%)', color: '#004e92' },
     '生活': { icon: <LifeIcon />, gradient: 'linear-gradient(135deg, #56ab2f 0%, #a8e063 100%)', color: '#56ab2f' },
-    '教育': { icon: <EduIcon />, gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', color: '#4facfe' },
     '娱乐': { icon: <FunIcon />, gradient: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', color: '#fa709a' },
-    '商业': { icon: <CommercialIcon />, gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: '#667eea' },
     '艺术': { icon: <ArtIcon />, gradient: 'linear-gradient(135deg, #ff9a9e 0%, #fecfef 99%, #fecfef 100%)', color: '#ff9a9e' },
     '纪录片': { icon: <DocIcon />, gradient: 'linear-gradient(135deg, #434343 0%, #000000 100%)', color: '#888' },
-    '轻松': { icon: <RelaxIcon />, gradient: 'linear-gradient(135deg, #89f7fe 0%, #66a6ff 100%)', color: '#66a6ff' },
-    '严肃': { icon: <SeriousIcon />, gradient: 'linear-gradient(135deg, #20002c 0%, #cbb4d4 100%)', color: '#8e44ad' },
+    '漫剧': { icon: <ComicIcon />, gradient: 'linear-gradient(135deg, #f953c6 0%, #b91d73 100%)', color: '#f953c6' },
+};
+
+// Full style prompts sent to the AI — richer than the display label
+const STYLE_PROMPTS: Record<string, string> = {
+    '专业': 'cinematic corporate style, clean and authoritative composition, neutral cool tones, high-end premium feel, sharp professional lighting, suitable for brand films and business presentations',
+    '科技': 'cyberpunk tech aesthetic, dark background with neon blue and cyan glow, digital futurism, HUD overlays, precision industrial feel, glowing circuitry, suitable for tech products and AI themes',
+    '生活': 'warm lifestyle aesthetic, soft natural window light, golden hour tones, authentic everyday moments, cozy and approachable atmosphere, real human stories, suitable for lifestyle vlogs',
+    '娱乐': 'vibrant entertainment style, highly saturated colors, energetic dynamic pacing, trendy and youthful, pop culture aesthetic, bold typography energy, suitable for variety shows and short video',
+    '艺术': 'avant-garde art film aesthetic, bold and unconventional composition, experimental cinematography, strong visual impact, rich color expression, fine art sensibility, suitable for creative and gallery work',
+    '纪录片': 'documentary realism style, natural handheld camera feel, authentic available light, deep narrative storytelling, journalistic objectivity, human and social themes, raw and honest',
+    '漫剧': 'anime manga style, vivid high-contrast colors, dynamic speed lines and motion blur, expressive exaggerated character movement, 2D cel-shading aesthetic, comic panel energy, suitable for animated and creative short films',
+};
+
+const URL_PATTERN = /https?:\/\/[^\s<>"{}|\\^`[\]]+/g;
+
+const extractUrls = (value: string): string[] => {
+    const matches = value.match(URL_PATTERN) || [];
+    return Array.from(new Set(matches.map((url) => url.replace(/[).,;!?，。；！？]+$/, ''))));
+};
+
+const getUrlHost = (url: string): string => {
+    try {
+        return new URL(url).hostname;
+    } catch {
+        return url;
+    }
+};
+
+const sourceTypeLabel: Record<string, string> = {
+    webpage: 'Web',
+    video: 'Video',
+    image: 'Image',
+    unknown: 'Source'
 };
 
 const GeneratePage: React.FC = () => {
@@ -131,20 +167,41 @@ const GeneratePage: React.FC = () => {
 
     const [videoGenerating, setVideoGenerating] = useState(false);
     const [videoTask, setVideoTask] = useState<VideoGenerationTask | null>(null);
+    const [sourceMaterial, setSourceMaterial] = useState<SourceMaterial | null>(null);
+    const [producerStatus, setProducerStatus] = useState<'idle' | 'analyzing' | 'ready' | 'needs_clarification' | 'error'>('idle');
+    const [producerMessage, setProducerMessage] = useState('Describe the outcome you want. Sources are detected automatically.');
+    const [producerSuggestions, setProducerSuggestions] = useState<string[]>([]);
 
     const [editableShots, setEditableShots] = useState<Shot[]>([]);
     const [isEditingShots, setIsEditingShots] = useState(false);
 
     // Settings
     const [enableNarration, setEnableNarration] = useState(false);
-    const [narrationVoice, setNarrationVoice] = useState('chinese_female');
+    const [narrationVoice, setNarrationVoice] = useState<NarrationVoice>('chinese_female');
     const [narrationSpeed, setNarrationSpeed] = useState(1.0);
     const [pacingStrategy, setPacingStrategy] = useState('balanced');
+
+    // Dev / Production mode — determined at build time via VITE_DEV_MODE env var
+    // .env.development  → VITE_DEV_MODE=true  (dev controls visible)
+    // .env.production   → VITE_DEV_MODE=false (clean production UI)
+    // Test deployment:  VITE_DEV_MODE=true npm run build
+    const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';
 
     // Reset state on mount to ensure we see the search view
     useEffect(() => {
         setHasStarted(false);
     }, []);
+
+    const detectedUrls = useMemo(() => extractUrls(topic), [topic]);
+
+    useEffect(() => {
+        if (sourceMaterial && !detectedUrls.includes(sourceMaterial.url)) {
+            setSourceMaterial(null);
+            setProducerStatus('idle');
+            setProducerSuggestions([]);
+            setProducerMessage('Describe the outcome you want. Sources are detected automatically.');
+        }
+    }, [detectedUrls, sourceMaterial]);
 
     // --- Logic ---
 
@@ -160,7 +217,8 @@ const GeneratePage: React.FC = () => {
                 shots: response.shots,
                 totalDuration: response.totalDuration,
                 createdAt: new Date().toISOString(),
-                videoTask: taskData
+                videoTask: taskData,
+                sourceMaterial
             };
             const existing = localStorage.getItem('savedScripts');
             const scripts = existing ? JSON.parse(existing) : [];
@@ -184,7 +242,7 @@ const GeneratePage: React.FC = () => {
         try {
             const request: ScriptGenerateRequest = {
                 topic: topic.trim(),
-                style,
+                style: STYLE_PROMPTS[style] ?? style,
                 targetDuration,
                 shotCount,
                 additionalRequirements: additionalRequirements.trim() || undefined
@@ -207,21 +265,45 @@ const GeneratePage: React.FC = () => {
         console.log("Starting video generation...");
         setLoading(true);
         setError(null);
+        setProducerStatus('analyzing');
+        setProducerMessage(detectedUrls.length > 0 ? 'Analyzing source and intent...' : 'Understanding creative intent...');
+        setProducerSuggestions([]);
 
         try {
-            console.log("Creating task...");
-            const { taskId } = await videosApi.createTask({
-                topic: topic.trim(),
-                style,
+            console.log("Creating task from intent...");
+            const response = await videosApi.createFromIntent({
+                userInput: topic.trim(),
+                style: STYLE_PROMPTS[style] ?? style,
                 targetDuration,
                 shotCount,
-                generationMode,  // 添加生成模式
+                generationMode,
                 additionalRequirements: additionalRequirements.trim() || undefined,
                 enableNarration,
                 narrationVoice,
                 narrationSpeed,
                 pacingStrategy
             });
+
+            if (response.sourceMaterial) {
+                setSourceMaterial(response.sourceMaterial);
+            }
+            setProducerMessage(response.message || '');
+            setProducerSuggestions(response.suggestions || []);
+
+            if (response.action === 'needs_clarification') {
+                setHasStarted(true);
+                setActiveTab(0);
+                setProducerStatus('needs_clarification');
+                setLoading(false);
+                return;
+            }
+
+            const taskId = response.taskId;
+            if (!taskId) {
+                throw new Error('No task id returned from intent generation');
+            }
+
+            setProducerStatus('ready');
             console.log("Task created:", taskId);
 
             // 🆕 立即跳转到 Project 页面，在那里实时显示生成进度
@@ -231,6 +313,7 @@ const GeneratePage: React.FC = () => {
                     topic: topic.trim(),
                     style,
                     generationMode,
+                    sourceMaterial: response.sourceMaterial || sourceMaterial,
                     isGenerating: true  // 标记正在生成
                 }
             });
@@ -238,6 +321,8 @@ const GeneratePage: React.FC = () => {
         } catch (err: any) {
             console.error("Generation error:", err);
             setError(err.response?.data?.detail || err.message || 'Video generation failed');
+            setProducerStatus('error');
+            setProducerMessage(err.response?.data?.detail || err.message || 'Generation failed');
             setLoading(false);
         }
     };
@@ -384,41 +469,162 @@ const GeneratePage: React.FC = () => {
         );
     };
 
+    const getSourceIcon = (type?: string) => {
+        if (type === 'image') return <ImageIcon fontSize="small" />;
+        if (type === 'video') return <VideoIcon fontSize="small" />;
+        return <LinkIcon fontSize="small" />;
+    };
+
+    const removeSourceUrl = (url: string) => {
+        setTopic((prev) => prev.replace(url, ' ').replace(/\s+/g, ' ').trim());
+        setSourceMaterial(null);
+        setProducerStatus('idle');
+        setProducerSuggestions([]);
+        setProducerMessage('Describe the outcome you want. Sources are detected automatically.');
+    };
+
+    const renderSourceChips = () => {
+        const urls = sourceMaterial ? [sourceMaterial.url] : detectedUrls;
+        if (urls.length === 0) return null;
+
+        return (
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 2, mb: hasStarted ? 3 : 0, justifyContent: hasStarted ? 'flex-start' : 'center' }}>
+                {urls.map((url) => (
+                    <Chip
+                        key={url}
+                        icon={sourceMaterial?.url === url ? getSourceIcon(sourceMaterial.type) : <LinkIcon fontSize="small" />}
+                        label={sourceMaterial?.url === url
+                            ? `${sourceTypeLabel[sourceMaterial.type] || 'Source'}: ${sourceMaterial.title || sourceMaterial.domain || url}`
+                            : `Link: ${getUrlHost(url)}`}
+                        onDelete={sourceMaterial?.url === url ? () => removeSourceUrl(url) : undefined}
+                        deleteIcon={<CloseIcon />}
+                        sx={{
+                            maxWidth: hasStarted ? '100%' : 520,
+                            bgcolor: 'rgba(255,255,255,0.06)',
+                            color: '#ddd',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            '& .MuiChip-label': {
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                            }
+                        }}
+                    />
+                ))}
+            </Stack>
+        );
+    };
+
+    const appendSuggestion = (suggestion: string) => {
+        setTopic((prev) => `${prev.trim()} ${suggestion}`.trim());
+        setProducerStatus('ready');
+        setProducerMessage('Intent updated. Ready to generate.');
+        setProducerSuggestions([]);
+    };
+
+    const renderProducerPanel = () => (
+        <Paper
+            square
+            elevation={0}
+            sx={{
+                width: 340,
+                flexShrink: 0,
+                height: '100%',
+                bgcolor: '#0f0f0f',
+                borderLeft: '1px solid #222',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden'
+            }}
+        >
+            <Box sx={{ p: 2.5, borderBottom: '1px solid #222' }}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                    <ProducerIcon sx={{ color: '#4facfe' }} />
+                    <Typography variant="subtitle2" fontWeight={700} color="white">AI Producer</Typography>
+                </Stack>
+                {producerStatus === 'analyzing' && <LinearProgress sx={{ mt: 2, bgcolor: '#222', '& .MuiLinearProgress-bar': { bgcolor: '#4facfe' } }} />}
+            </Box>
+
+            <Box sx={{ p: 2.5, overflowY: 'auto', flex: 1 }}>
+                <Stack spacing={2}>
+                    <Paper sx={{ p: 2, bgcolor: '#171717', border: '1px solid #282828', borderRadius: 2 }}>
+                        <Typography variant="caption" color="#666" fontWeight={700} sx={{ letterSpacing: 1, display: 'block', mb: 1 }}>
+                            STATUS
+                        </Typography>
+                        <Typography variant="body2" color={producerStatus === 'error' ? '#ff5252' : '#ddd'} sx={{ lineHeight: 1.6 }}>
+                            {producerMessage}
+                        </Typography>
+                    </Paper>
+
+                    {sourceMaterial && <SourceReviewPanel sourceMaterial={sourceMaterial} />}
+
+                    {!sourceMaterial && detectedUrls.length > 0 && (
+                        <Paper sx={{ p: 2, bgcolor: '#171717', border: '1px solid #282828', borderRadius: 2 }}>
+                            <Typography variant="caption" color="#666" fontWeight={700} sx={{ letterSpacing: 1, display: 'block', mb: 1 }}>
+                                DETECTED LINK
+                            </Typography>
+                            {renderSourceChips()}
+                        </Paper>
+                    )}
+
+                    {producerSuggestions.length > 0 && (
+                        <Stack spacing={1}>
+                            {producerSuggestions.map((suggestion) => (
+                                <Button
+                                    key={suggestion}
+                                    variant="outlined"
+                                    size="small"
+                                    onClick={() => appendSuggestion(suggestion)}
+                                    sx={{
+                                        justifyContent: 'flex-start',
+                                        borderColor: '#333',
+                                        color: '#ddd',
+                                        textTransform: 'none',
+                                        '&:hover': { borderColor: '#4facfe', bgcolor: 'rgba(79,172,254,0.08)' }
+                                    }}
+                                >
+                                    {suggestion}
+                                </Button>
+                            ))}
+                        </Stack>
+                    )}
+                </Stack>
+            </Box>
+        </Paper>
+    );
+
     // --- RENDER: INITIAL SEARCH VIEW ---
     if (!hasStarted) {
         return (
             <Box sx={{
                 height: 'calc(100vh - 64px)',
-                background: '#0a0a0a',
+                background: 'linear-gradient(180deg, #111318 0%, #0b0d11 100%)',
                 color: 'white',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 overflow: 'hidden',
-                position: 'relative'
-            }}>
-                {/* Background ambient light */}
-                <Box sx={{
-                    position: 'absolute', top: '20%', left: '50%', transform: 'translate(-50%, -50%)',
-                    width: '60vw', height: '60vw',
-                    background: 'radial-gradient(circle, rgba(255, 64, 129, 0.05) 0%, transparent 70%)',
-                    zIndex: 0,
+                position: 'relative',
+                '&::before': {
+                    content: '""',
+                    position: 'absolute',
+                    inset: 0,
+                    backgroundImage: 'linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)',
+                    backgroundSize: '56px 56px',
+                    maskImage: 'linear-gradient(180deg, rgba(0,0,0,0.75), rgba(0,0,0,0.15))',
                     pointerEvents: 'none'
-                }} />
-
-                <Container maxWidth="md" sx={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
-                    <Box>
-                        <Box sx={{ mb: 6 }}>
-                             <Typography variant="h2" fontWeight={700} sx={{ 
-                                 background: 'linear-gradient(to right, #fff 20%, #888 100%)',
-                                 WebkitBackgroundClip: 'text',
-                                 WebkitTextFillColor: 'transparent',
-                                 letterSpacing: '-1px',
-                                 mb: 2
+                }
+            }}>
+                <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1, textAlign: 'center', px: { xs: 2, md: 4 } }}>
+                    <Box sx={{ maxWidth: 920, mx: 'auto' }}>
+                        <Box sx={{ mb: 4 }}>
+                             <Typography variant="h2" fontWeight={700} sx={{
+                                 color: '#f8fafc',
+                                 letterSpacing: 0,
+                                 mb: 1.5
                              }}>
                                 Orenix AI
                              </Typography>
-                             <Typography variant="h6" color="#666" fontWeight={300}>
+                             <Typography variant="h6" color="#9aa4b2" fontWeight={400}>
                                  Next Generation Generative Video Platform
                              </Typography>
                         </Box>
@@ -426,26 +632,27 @@ const GeneratePage: React.FC = () => {
                         <Paper
                             elevation={0}
                             sx={{
-                                p: '2px 4px',
+                                p: 1,
                                 display: 'flex',
                                 alignItems: 'center',
                                 width: '100%',
-                                borderRadius: 4,
-                                bgcolor: '#1a1a1a',
-                                border: '1px solid #333',
+                                borderRadius: 2,
+                                bgcolor: 'rgba(18, 22, 29, 0.92)',
+                                border: '1px solid rgba(148, 163, 184, 0.22)',
+                                boxShadow: '0 24px 70px rgba(0, 0, 0, 0.34)',
                                 transition: 'all 0.3s',
                                 '&:hover': {
-                                    borderColor: '#555',
-                                    boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                                    borderColor: 'rgba(148, 163, 184, 0.36)',
+                                    bgcolor: 'rgba(21, 25, 33, 0.96)'
                                 },
                                 '&:focus-within': {
-                                    borderColor: '#FF4081',
-                                    boxShadow: '0 0 30px rgba(255, 64, 129, 0.15)'
+                                    borderColor: '#38bdf8',
+                                    boxShadow: '0 24px 70px rgba(0, 0, 0, 0.38), 0 0 0 3px rgba(56, 189, 248, 0.14)'
                                 }
                             }}
                         >
-                            <InputAdornment position="start" sx={{ pl: 2 }}>
-                                <MagicIcon sx={{ color: '#FF4081' }} />
+                            <InputAdornment position="start" sx={{ pl: 1.5 }}>
+                                <MagicIcon sx={{ color: '#38bdf8' }} />
                             </InputAdornment>
                             <TextField
                                 fullWidth
@@ -454,41 +661,76 @@ const GeneratePage: React.FC = () => {
                                 value={topic}
                                 onChange={(e) => setTopic(e.target.value)}
                                 onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && topic.trim()) handleGenerateVideo();
+                                    if (e.key === 'Enter' && topic.trim() && !loading) handleGenerateVideo();
                                 }}
                                 InputProps={{
                                     disableUnderline: true,
                                     sx: {
-                                        p: 2,
-                                        fontSize: '1.2rem',
-                                        color: 'white',
-                                        '&::placeholder': { color: '#666', opacity: 1 }
+                                        px: { xs: 1.5, sm: 2 },
+                                        py: 1.75,
+                                        fontSize: { xs: '1rem', sm: '1.1rem' },
+                                        color: '#f8fafc',
+                                        '&::placeholder': { color: '#64748b', opacity: 1 }
                                     }
                                 }}
                             />
-                            <Divider sx={{ height: 28, m: 0.5, borderColor: '#333' }} orientation="vertical" />
+                            <Divider sx={{ height: 28, m: 0.5, borderColor: 'rgba(148, 163, 184, 0.2)' }} orientation="vertical" />
                             <IconButton 
                                 color="primary" 
-                                sx={{ p: 2, mr: 0.5 }} 
+                                sx={{
+                                    width: 48,
+                                    height: 48,
+                                    mr: 0.25,
+                                    bgcolor: '#38bdf8',
+                                    color: '#071018',
+                                    borderRadius: 1.5,
+                                    '&:hover': { bgcolor: '#7dd3fc' },
+                                    '&.Mui-disabled': {
+                                        bgcolor: 'rgba(148, 163, 184, 0.12)',
+                                        color: 'rgba(148, 163, 184, 0.36)'
+                                    }
+                                }}
                                 onClick={handleGenerateVideo}
-                                disabled={!topic.trim()}
+                                disabled={!topic.trim() || loading}
                             >
-                                <ArrowForwardIcon />
+                                {loading ? <CircularProgress size={22} sx={{ color: '#071018' }} /> : <ArrowForwardIcon />}
                             </IconButton>
                         </Paper>
 
+                        {loading && (
+                            <Paper
+                                elevation={0}
+                                sx={{
+                                    mt: 2,
+                                    mx: 'auto',
+                                    maxWidth: 520,
+                                    p: 1.5,
+                                    bgcolor: 'rgba(18, 22, 29, 0.86)',
+                                    border: '1px solid rgba(56, 189, 248, 0.22)',
+                                    borderRadius: 2
+                                }}
+                            >
+                                <Typography variant="body2" color="#b8c3cf" sx={{ mb: 1 }}>
+                                    {producerMessage || 'Creating generation task...'}
+                                </Typography>
+                                <LinearProgress sx={{ bgcolor: 'rgba(148, 163, 184, 0.16)', '& .MuiLinearProgress-bar': { bgcolor: '#38bdf8' } }} />
+                            </Paper>
+                        )}
+
+                        {renderSourceChips()}
+
                         {/* Styles Row */}
-                        <Box sx={{ mt: 6 }}>
-                            <Typography variant="caption" color="#666" fontWeight={700} sx={{ letterSpacing: 1, mb: 3, display: 'block' }}>
+                        <Box sx={{ mt: 5 }}>
+                            <Typography variant="caption" color="#7d8794" fontWeight={700} sx={{ letterSpacing: 0, mb: 2, display: 'block' }}>
                                 CHOOSE A STYLE
                             </Typography>
                             <Box sx={{ 
                                 display: 'flex', 
-                                gap: 2, 
+                                gap: 1.25,
                                 justifyContent: 'center',
                                 flexWrap: 'wrap'
                             }}>
-                                {Object.keys(STYLE_CONFIG).slice(0, 6).map((s) => {
+                                {Object.keys(STYLE_CONFIG).map((s) => {
                                     const config = STYLE_CONFIG[s];
                                     const isActive = style === s;
                                     return (
@@ -499,17 +741,19 @@ const GeneratePage: React.FC = () => {
                                             clickable
                                             onClick={() => setStyle(s)}
                                             sx={{
-                                                bgcolor: isActive ? alpha(config.color, 0.2) : '#1a1a1a',
-                                                color: isActive ? config.color : '#888',
-                                                border: `1px solid ${isActive ? config.color : '#333'}`,
-                                                borderRadius: 2,
-                                                px: 1,
-                                                py: 2.5,
+                                                bgcolor: isActive ? 'rgba(56, 189, 248, 0.14)' : 'rgba(18, 22, 29, 0.84)',
+                                                color: isActive ? '#e0f7ff' : '#9aa4b2',
+                                                border: `1px solid ${isActive ? '#38bdf8' : 'rgba(148, 163, 184, 0.18)'}`,
+                                                borderRadius: 1.5,
+                                                px: 1.25,
+                                                py: 2.25,
                                                 fontSize: '0.9rem',
                                                 transition: 'all 0.2s',
+                                                boxShadow: isActive ? '0 0 0 3px rgba(56, 189, 248, 0.08)' : 'none',
+                                                '& .MuiChip-icon': { color: isActive ? '#38bdf8' : '#9aa4b2' },
                                                 '&:hover': {
-                                                    bgcolor: alpha(config.color, 0.1),
-                                                    borderColor: isActive ? config.color : '#555',
+                                                    bgcolor: 'rgba(56, 189, 248, 0.1)',
+                                                    borderColor: isActive ? '#38bdf8' : 'rgba(148, 163, 184, 0.34)',
                                                     transform: 'translateY(-2px)'
                                                 }
                                             }}
@@ -519,47 +763,56 @@ const GeneratePage: React.FC = () => {
                             </Box>
                         </Box>
 
-                        {/* Specifications Card */}
-                        <Paper sx={{ mt: 4, p: 3, bgcolor: 'rgba(255,255,255,0.05)', borderRadius: 2, border: '1px solid rgba(255,255,255,0.1)' }}>
+                        {/* Specifications Card — DEV only */}
+                        {DEV_MODE && (
+                        <Paper sx={{ mt: 4, p: 3, bgcolor: 'rgba(18, 22, 29, 0.82)', borderRadius: 2, border: '1px solid rgba(148, 163, 184, 0.18)', boxShadow: '0 18px 50px rgba(0,0,0,0.24)' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 1 }}>
+                                <TerminalIcon sx={{ fontSize: '1rem', color: '#f59e0b' }} />
+                                <Typography variant="caption" color="#f59e0b" fontWeight={700} sx={{ letterSpacing: 0 }}>
+                                    DEV CONTROLS
+                                </Typography>
+                            </Box>
                             <Grid container spacing={4} alignItems="center">
                                 <Grid item xs={12} md={6}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                        <Typography variant="body2" color="#888" fontWeight={700}>DURATION</Typography>
-                                        <Typography variant="body2" color="#FF4081" fontWeight={700}>{targetDuration}s</Typography>
+                                        <Typography variant="body2" color="#9aa4b2" fontWeight={700}>DURATION</Typography>
+                                        <Typography variant="body2" color="#38bdf8" fontWeight={700}>{targetDuration}s</Typography>
                                     </Box>
                                     <Slider
                                         value={targetDuration}
                                         onChange={(_, v) => setTargetDuration(v as number)}
                                         min={10} max={300} step={5}
-                                        sx={{ color: '#FF4081' }}
+                                        sx={{ color: '#38bdf8' }}
                                     />
                                 </Grid>
                                 <Grid item xs={12} md={6}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                        <Typography variant="body2" color="#888" fontWeight={700}>SHOTS</Typography>
-                                        <Typography variant="body2" color="#4facfe" fontWeight={700}>{shotCount}</Typography>
+                                        <Typography variant="body2" color="#9aa4b2" fontWeight={700}>SHOTS</Typography>
+                                        <Typography variant="body2" color="#38bdf8" fontWeight={700}>{shotCount}</Typography>
                                     </Box>
                                     <Slider
                                         value={shotCount}
                                         onChange={(_, v) => setShotCount(v as number)}
                                         min={3} max={20} step={1}
-                                        sx={{ color: '#4facfe' }}
+                                        sx={{ color: '#38bdf8' }}
                                     />
                                 </Grid>
                             </Grid>
                         </Paper>
+                        )}
 
-                        {/* 生成模式选择 */}
+                        {/* 生成模式选择 — DEV only */}
+                        {DEV_MODE && (
                         <Paper sx={{
                             p: 3,
                             mt: 3,
-                            background: 'rgba(255, 255, 255, 0.02)',
-                            backdropFilter: 'blur(20px)',
-                            border: '1px solid rgba(255, 255, 255, 0.05)',
-                            borderRadius: 3
+                            background: 'rgba(18, 22, 29, 0.82)',
+                            border: '1px solid rgba(148, 163, 184, 0.18)',
+                            borderRadius: 2,
+                            boxShadow: '0 18px 50px rgba(0,0,0,0.24)'
                         }}>
                             <Typography variant="subtitle1" fontWeight={600} gutterBottom sx={{ color: 'white', mb: 2 }}>
-                                🎛️ 生成模式
+                                生成模式
                             </Typography>
                             <Grid container spacing={2}>
                                 {/* 人工确认模式 */}
@@ -569,18 +822,18 @@ const GeneratePage: React.FC = () => {
                                         sx={{
                                             p: 3,
                                             cursor: 'pointer',
-                                            border: `2px solid ${generationMode === 'manual' ? '#4facfe' : 'transparent'}`,
-                                            bgcolor: generationMode === 'manual' ? alpha('#4facfe', 0.15) : 'rgba(255, 255, 255, 0.03)',
+                                            border: `1px solid ${generationMode === 'manual' ? '#38bdf8' : 'rgba(148, 163, 184, 0.16)'}`,
+                                            bgcolor: generationMode === 'manual' ? 'rgba(56, 189, 248, 0.12)' : 'rgba(11, 13, 17, 0.58)',
                                             borderRadius: 2,
                                             transition: 'all 0.3s',
                                             '&:hover': {
-                                                borderColor: '#4facfe',
-                                                bgcolor: alpha('#4facfe', 0.1)
+                                                borderColor: '#38bdf8',
+                                                bgcolor: 'rgba(56, 189, 248, 0.1)'
                                             }
                                         }}
                                     >
                                         <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                                            <EditIcon sx={{ mr: 1, color: '#4facfe' }} />
+                                            <EditIcon sx={{ mr: 1, color: '#38bdf8' }} />
                                             <Typography variant="h6" fontWeight={600} sx={{ color: 'white' }}>
                                                 人工确认模式
                                             </Typography>
@@ -589,9 +842,9 @@ const GeneratePage: React.FC = () => {
                                             生成分镜图后可编辑、重新生成，确认后才生成视频
                                         </Typography>
                                         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                                            <Chip label="精细控制" size="small" sx={{ bgcolor: 'rgba(79, 172, 254, 0.2)', color: '#4facfe' }} />
-                                            <Chip label="可编辑" size="small" sx={{ bgcolor: 'rgba(79, 172, 254, 0.2)', color: '#4facfe' }} />
-                                            <Chip label="成本优化" size="small" sx={{ bgcolor: 'rgba(79, 172, 254, 0.2)', color: '#4facfe' }} />
+                                            <Chip label="精细控制" size="small" sx={{ bgcolor: 'rgba(56, 189, 248, 0.16)', color: '#bae6fd' }} />
+                                            <Chip label="可编辑" size="small" sx={{ bgcolor: 'rgba(56, 189, 248, 0.16)', color: '#bae6fd' }} />
+                                            <Chip label="成本优化" size="small" sx={{ bgcolor: 'rgba(56, 189, 248, 0.16)', color: '#bae6fd' }} />
                                         </Box>
                                     </Paper>
                                 </Grid>
@@ -603,18 +856,18 @@ const GeneratePage: React.FC = () => {
                                         sx={{
                                             p: 3,
                                             cursor: 'pointer',
-                                            border: `2px solid ${generationMode === 'autopilot' ? '#FF4081' : 'transparent'}`,
-                                            bgcolor: generationMode === 'autopilot' ? alpha('#FF4081', 0.15) : 'rgba(255, 255, 255, 0.03)',
+                                            border: `1px solid ${generationMode === 'autopilot' ? '#38bdf8' : 'rgba(148, 163, 184, 0.16)'}`,
+                                            bgcolor: generationMode === 'autopilot' ? 'rgba(56, 189, 248, 0.12)' : 'rgba(11, 13, 17, 0.58)',
                                             borderRadius: 2,
                                             transition: 'all 0.3s',
                                             '&:hover': {
-                                                borderColor: '#FF4081',
-                                                bgcolor: alpha('#FF4081', 0.1)
+                                                borderColor: '#38bdf8',
+                                                bgcolor: 'rgba(56, 189, 248, 0.1)'
                                             }
                                         }}
                                     >
                                         <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                                            <MagicIcon sx={{ mr: 1, color: '#FF4081' }} />
+                                            <MagicIcon sx={{ mr: 1, color: '#38bdf8' }} />
                                             <Typography variant="h6" fontWeight={600} sx={{ color: 'white' }}>
                                                 托管模式
                                             </Typography>
@@ -623,37 +876,44 @@ const GeneratePage: React.FC = () => {
                                             一键生成，全自动完成所有步骤，无需人工干预
                                         </Typography>
                                         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                                            <Chip label="快速" size="small" sx={{ bgcolor: 'rgba(255, 64, 129, 0.2)', color: '#FF4081' }} />
-                                            <Chip label="全自动" size="small" sx={{ bgcolor: 'rgba(255, 64, 129, 0.2)', color: '#FF4081' }} />
-                                            <Chip label="省心" size="small" sx={{ bgcolor: 'rgba(255, 64, 129, 0.2)', color: '#FF4081' }} />
+                                            <Chip label="快速" size="small" sx={{ bgcolor: 'rgba(56, 189, 248, 0.16)', color: '#bae6fd' }} />
+                                            <Chip label="全自动" size="small" sx={{ bgcolor: 'rgba(56, 189, 248, 0.16)', color: '#bae6fd' }} />
+                                            <Chip label="省心" size="small" sx={{ bgcolor: 'rgba(56, 189, 248, 0.16)', color: '#bae6fd' }} />
                                         </Box>
                                     </Paper>
                                 </Grid>
                             </Grid>
                         </Paper>
+                        )}
 
                         <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 4 }}>
                             <Button 
                                 variant="contained" 
                                 size="large"
                                 onClick={handleGenerateVideo}
-                                disabled={!topic.trim()}
-                                startIcon={<MagicIcon />}
+                                disabled={!topic.trim() || loading}
+                                startIcon={loading ? <CircularProgress size={18} sx={{ color: '#071018' }} /> : <MagicIcon />}
                                 sx={{
-                                    borderRadius: 3,
+                                    borderRadius: 2,
                                     px: 4,
                                     py: 1.5,
-                                    bgcolor: '#FF4081',
+                                    bgcolor: '#38bdf8',
+                                    color: '#071018',
                                     fontWeight: 700,
-                                    '&:hover': { bgcolor: '#F50057' }
+                                    boxShadow: '0 12px 30px rgba(56, 189, 248, 0.24)',
+                                    '&:hover': { bgcolor: '#7dd3fc', boxShadow: '0 16px 38px rgba(56, 189, 248, 0.3)' },
+                                    '&.Mui-disabled': {
+                                        bgcolor: 'rgba(148, 163, 184, 0.12)',
+                                        color: 'rgba(148, 163, 184, 0.42)'
+                                    }
                                 }}
                             >
-                                Generate Video
+                                {loading ? 'Creating Task...' : 'Generate Video'}
                             </Button>
                             <Button 
                                 variant="text" 
                                 onClick={() => setHasStarted(true)}
-                                sx={{ color: '#666', '&:hover': { color: 'white' } }}
+                                sx={{ color: '#8792a0', '&:hover': { color: 'white', bgcolor: 'rgba(148, 163, 184, 0.08)' } }}
                             >
                                 Skip to Studio
                             </Button>
@@ -676,6 +936,7 @@ const GeneratePage: React.FC = () => {
                                                 totalDuration: last.totalDuration
                                             });
                                             if (last.videoTask) setVideoTask(last.videoTask);
+                                            if (last.sourceMaterial) setSourceMaterial(last.sourceMaterial);
                                             setHasStarted(true);
                                             setActiveTab(1);
                                             setEditableShots(last.shots);
@@ -683,7 +944,7 @@ const GeneratePage: React.FC = () => {
                                         }
                                     }
                                 }}
-                                sx={{ color: '#666', '&:hover': { color: 'white' } }}
+                                sx={{ color: '#8792a0', '&:hover': { color: 'white', bgcolor: 'rgba(148, 163, 184, 0.08)' } }}
                             >
                                 History
                             </Button>
@@ -730,6 +991,7 @@ const GeneratePage: React.FC = () => {
                     >
                         <Tab label="Create" />
                         <Tab label="Script" disabled={!scriptResult} />
+                        <Tab label="Director" disabled={!videoTask?.bible} />
                         <Tab label="Storyboard" disabled={!showStoryboardEditor} />
                         <Tab label="Settings" />
                         <Tab icon={<TerminalIcon fontSize="small" />} label="Logs" disabled={!videoTask} />
@@ -770,6 +1032,8 @@ const GeneratePage: React.FC = () => {
                                         }
                                     }}
                                 />
+
+                                {renderSourceChips()}
 
                                 {/* ... (Rest of sidebar) ... */}
                                 <Typography variant="caption" color="#666" fontWeight={700} sx={{ letterSpacing: 1, mb: 2, display: 'block' }}>
@@ -903,8 +1167,33 @@ const GeneratePage: React.FC = () => {
                             </motion.div>
                         )}
 
+                        {/* Director Tab — DirectorAgent 产出的全局蓝图 */}
+                        {activeTab === 2 && videoTask?.bible && (
+                            <motion.div
+                                key="director"
+                                initial={{ opacity: 0, x: -20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: 20 }}
+                                transition={{ duration: 0.2 }}
+                            >
+                                <BiblePanel bible={videoTask.bible} />
+                            </motion.div>
+                        )}
+
+                        {activeTab === 2 && !videoTask?.bible && (
+                            <Box sx={{ textAlign: 'center', py: 10 }}>
+                                <MovieIcon sx={{ fontSize: 80, color: '#333', mb: 2 }} />
+                                <Typography variant="h6" color="text.secondary">
+                                    导演蓝图将在脚本生成后显示
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                    含角色参考图、场景参考图、镜头转场标注
+                                </Typography>
+                            </Box>
+                        )}
+
                         {/* Storyboard Tab */}
-                        {activeTab === 2 && showStoryboardEditor && videoTask && (
+                        {activeTab === 3 && showStoryboardEditor && videoTask && (
                             <motion.div
                                 key="storyboard"
                                 initial={{ opacity: 0, x: -20 }}
@@ -923,7 +1212,7 @@ const GeneratePage: React.FC = () => {
                         )}
 
                         {/* Storyboard Tab - Empty State */}
-                        {activeTab === 2 && !showStoryboardEditor && (
+                        {activeTab === 3 && !showStoryboardEditor && (
                             <Box sx={{ textAlign: 'center', py: 10 }}>
                                 <MovieIcon sx={{ fontSize: 80, color: '#333', mb: 2 }} />
                                 <Typography variant="h6" color="text.secondary">
@@ -935,7 +1224,7 @@ const GeneratePage: React.FC = () => {
                             </Box>
                         )}
 
-                        {activeTab === 3 && (
+                        {activeTab === 4 && (
                             <motion.div
                                 key="settings"
                                 initial={{ opacity: 0, x: -20 }}
@@ -967,7 +1256,7 @@ const GeneratePage: React.FC = () => {
                                                     fullWidth
                                                     size="small"
                                                     value={narrationVoice}
-                                                    onChange={(e) => setNarrationVoice(e.target.value)}
+                                                    onChange={(e) => setNarrationVoice(e.target.value as NarrationVoice)}
                                                     sx={{ bgcolor: '#0f0f0f', color: 'white', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#333' } }}
                                                 >
                                                     <MenuItem value="chinese_female">Chinese Female</MenuItem>
@@ -1009,7 +1298,7 @@ const GeneratePage: React.FC = () => {
                             </motion.div>
                         )}
 
-                        {activeTab === 4 && videoTask && (
+                        {activeTab === 5 && videoTask && (
                             <motion.div
                                 key="logs"
                                 initial={{ opacity: 0, x: -20 }}
@@ -1085,8 +1374,9 @@ const GeneratePage: React.FC = () => {
                 }}
             />
 
-            {/* RIGHT MAIN: STAGE & TIMELINE */}
-            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', minWidth: 0 }}>
+            {/* RIGHT MAIN: STAGE, TIMELINE & PRODUCER */}
+            <Box sx={{ flex: 1, display: 'flex', minWidth: 0 }}>
+                <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', minWidth: 0 }}>
                 
                 {/* 1. Main Stage (Player) */}
                 <Box sx={{ 
@@ -1260,8 +1550,21 @@ const GeneratePage: React.FC = () => {
                                         bgImage = `url(${getFullUrl(shot.imagePath)})`;
                                     }
 
+                                    // 从 bible 取本镜头的导演级标签（场景/角色/转场）
+                                    const bibleShot = videoTask?.bible?.shot_graph?.find(g => g.sequence === shot.sequence);
+                                    const transitionLabel: Record<string, string> = {
+                                        cut: '',
+                                        match_cut: 'match',
+                                        continuous: '承接',
+                                    };
+                                    const transitionColor: Record<string, string> = {
+                                        cut: 'transparent',
+                                        match_cut: 'rgba(255, 152, 0, 0.7)',
+                                        continuous: 'rgba(76, 175, 80, 0.75)',
+                                    };
+
                                     return (
-                                    <Paper 
+                                    <Paper
                                         key={idx}
                                         onClick={() => {
                                             if (videoRef.current && scriptResult.shots) {
@@ -1305,12 +1608,44 @@ const GeneratePage: React.FC = () => {
                                             <Chip label={`#${shot.sequence}`} size="small" sx={{ height: 20, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', backdropFilter: 'blur(4px)' }} />
                                             <Typography variant="caption" sx={{ color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.8)', bgcolor: 'rgba(0,0,0,0.4)', px: 0.5, borderRadius: 1 }}>{shot.duration}s</Typography>
                                         </Box>
-                                        <Typography variant="body2" color="#ccc" sx={{ 
+
+                                        {/* Bible 标签：scene_id / 角色 / 转场（仅当存在时显示） */}
+                                        {bibleShot && (
+                                            <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ position: 'relative', zIndex: 2, mb: 0.5 }}>
+                                                <Chip
+                                                    label={`S${bibleShot.scene_id}`}
+                                                    size="small"
+                                                    sx={{ height: 18, fontSize: '0.65rem', bgcolor: 'rgba(63, 81, 181, 0.75)', color: '#fff' }}
+                                                />
+                                                {bibleShot.characters_in_shot.slice(0, 2).map((name) => (
+                                                    <Chip
+                                                        key={name}
+                                                        label={name}
+                                                        size="small"
+                                                        sx={{ height: 18, fontSize: '0.65rem', bgcolor: 'rgba(255,255,255,0.15)', color: '#fff' }}
+                                                    />
+                                                ))}
+                                                {transitionLabel[bibleShot.continuity] && (
+                                                    <Chip
+                                                        label={transitionLabel[bibleShot.continuity]}
+                                                        size="small"
+                                                        sx={{
+                                                            height: 18,
+                                                            fontSize: '0.65rem',
+                                                            bgcolor: transitionColor[bibleShot.continuity],
+                                                            color: '#fff',
+                                                        }}
+                                                    />
+                                                )}
+                                            </Stack>
+                                        )}
+
+                                        <Typography variant="body2" color="#ccc" sx={{
                                             position: 'relative',
                                             zIndex: 2,
-                                            flex: shot.imagePath ? 0 : 1, 
-                                            overflow: 'hidden', 
-                                            textOverflow: 'ellipsis', 
+                                            flex: shot.imagePath ? 0 : 1,
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
                                             display: '-webkit-box',
                                             WebkitLineClamp: 3,
                                             WebkitBoxOrient: 'vertical',
@@ -1332,6 +1667,8 @@ const GeneratePage: React.FC = () => {
                         )}
                     </Box>
                 </Box>
+                </Box>
+                {renderProducerPanel()}
             </Box>
         </Box>
     );

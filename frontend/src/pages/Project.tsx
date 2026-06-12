@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Box, Button, Stack, IconButton, Snackbar, Alert,
     Dialog, DialogTitle, DialogContent, DialogActions, TextField, Slider, Typography
@@ -10,7 +10,8 @@ import { AVCanvasPlayer } from '../components/project/AVCanvasPlayer';
 import { MultiTrackTimeline } from '../components/project/MultiTrackTimeline';
 import { ShotList } from '../components/project/ShotList';
 import { ScriptPanel } from '../components/project/ScriptPanel';
-import type { Shot, GeneratedVideo } from '../api/types';
+import type { Shot, GeneratedVideo, StrategyDecision, SourceMaterial } from '../api/types';
+import { videosApi } from '../api';
 
 interface ShotWithVideo extends Shot {
     videoData?: Shot | GeneratedVideo;
@@ -28,6 +29,8 @@ interface ProjectData {
     status?: string;
     progress?: number;
     logs?: Array<{ timestamp: string; level: string; message: string }>;
+    strategyDecision?: StrategyDecision | null;
+    sourceMaterial?: SourceMaterial | null;
 }
 
 // Layout Constants
@@ -39,10 +42,12 @@ const ProjectPage: React.FC = () => {
     const navigate = useNavigate();
 
     // State Management
-    const [activeTab, setActiveTab] = useState(0);
+    const [assetTab, setAssetTab] = useState(0);
+    const [detailTab, setDetailTab] = useState(0);
     const [projectData, setProjectData] = useState<ProjectData | null>(null);
     const [orderedShots, setOrderedShots] = useState<ShotWithVideo[]>([]);
     const [loading, setLoading] = useState(true);
+    const [confirmingGeneration, setConfirmingGeneration] = useState(false);
 
     // Playback State (synced with AVCanvasPlayer)
     const [currentShotIndex, setCurrentShotIndex] = useState(0);
@@ -58,32 +63,59 @@ const ProjectPage: React.FC = () => {
     const [editingDuration, setEditingDuration] = useState<number>(5);
     const [editingPrompt, setEditingPrompt] = useState<string>('');
 
-    // Panel resize
-    const [leftPanelWidth, setLeftPanelWidth] = useState(260);
-    const [rightPanelWidth, setRightPanelWidth] = useState(480);
+    // Panel resize — 用 ref 存当前值，拖动时直接操作 DOM，松手才 setState（避免拖动卡顿）
+    const [leftPanelWidth,   setLeftPanelWidth]   = useState(260);
+    const [rightPanelWidth,  setRightPanelWidth]  = useState(480);
+    const [timelineHeight,   setTimelineHeight]   = useState(280);
+    const pollingRef = useRef<number | null>(null);
+
+    const leftPanelRef    = useRef<HTMLDivElement>(null);
+    const rightPanelRef   = useRef<HTMLDivElement>(null);
+    const timelineWrapRef = useRef<HTMLDivElement>(null);
 
     const makeDividerHandler = (
-        getCurrent: () => number,
-        setter: (w: number) => void,
+        startVal: number,
+        ref: React.RefObject<HTMLDivElement>,
+        setter: (v: number) => void,
         direction: 'left' | 'right',
-        min: number,
-        max: number
+        min: number, max: number,
+        dim: 'width' | 'height' = 'width'
     ) => (e: React.MouseEvent) => {
         e.preventDefault();
-        const startX = e.clientX;
-        const startWidth = getCurrent();
-        const onMouseMove = (moveEvent: MouseEvent) => {
-            const delta = direction === 'right'
-                ? startX - moveEvent.clientX   // 右侧：向左拖 → 变宽
-                : moveEvent.clientX - startX;  // 左侧：向右拖 → 变宽
-            setter(Math.max(min, Math.min(max, startWidth + delta)));
+        // for horizontal: use clientX; for vertical: use clientY
+        const isHorizontal = dim === 'width';
+        const start = isHorizontal ? e.clientX : e.clientY;
+        let current = startVal;
+        const onMove = (mv: MouseEvent) => {
+            const pos = isHorizontal ? mv.clientX : mv.clientY;
+            const delta = direction === 'right' ? start - pos : pos - start;
+            current = Math.max(min, Math.min(max, startVal + delta));
+            if (ref.current) ref.current.style[dim] = `${current}px`;
         };
-        const onMouseUp = () => {
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            setter(current); // 松手时才触发 React re-render（1次）
         };
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    };
+
+    const handleTimelineDividerMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        const startY = e.clientY;
+        let current = timelineHeight;
+        const onMove = (mv: MouseEvent) => {
+            current = Math.max(120, Math.min(600, timelineHeight + (startY - mv.clientY)));
+            if (timelineWrapRef.current) timelineWrapRef.current.style.height = `${current}px`;
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            setTimelineHeight(current);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
     };
 
     // Snackbar
@@ -92,6 +124,30 @@ const ProjectPage: React.FC = () => {
         message: string;
         severity: 'success' | 'error' | 'info' | 'warning';
     }>({ open: false, message: '', severity: 'info' });
+
+    const applyTaskData = (task: any) => {
+        const shots = task.shots || [];
+        const shotsWithVideo = shots.map((shot: Shot) => ({
+            ...shot,
+            videoData: shot
+        }));
+
+        setProjectData({
+            taskId: task.taskId,
+            topic: task.topic,
+            style: task.style,
+            script: task.script,
+            shots: shotsWithVideo,
+            totalDuration: shots.reduce((sum: number, s: any) => sum + (s.duration || 0), 0),
+            generatedVideos: shots,
+            finalVideo: task.finalVideo,
+            status: task.status,
+            progress: task.progress,
+            logs: task.logs || [],
+            strategyDecision: task.strategyDecision || null,
+            sourceMaterial: task.sourceMaterial || location.state?.sourceMaterial || null
+        });
+    };
 
     // Callbacks from AVCanvasPlayer
     const handleTimeUpdate = (time: number) => {
@@ -128,46 +184,20 @@ const ProjectPage: React.FC = () => {
                 // 🆕 检查是否正在生成中
                 const isGenerating = location.state?.isGenerating;
 
-                const response = await fetch(`http://localhost:8000/api/video-generation/task/${taskId}`);
-                if (!response.ok) throw new Error('Failed to load project');
-
-                const result = await response.json();
-                console.log('[Project] Loaded data:', result);
-
-                // Extract actual data from the response
-                const data = result.data || result;
-                const shots = data.shots || [];
-
-                const shotsWithVideo = shots.map((shot: Shot) => {
-                    return {
-                        ...shot,
-                        videoData: shot // The shot itself contains video data
-                    };
-                });
-
-                setProjectData({
-                    taskId: data.taskId,
-                    topic: data.config?.topic || data.topic,
-                    style: data.config?.style || data.style,
-                    script: data.script,
-                    shots: shotsWithVideo,
-                    totalDuration: shots.reduce((sum: number, s: any) => sum + (s.duration || 0), 0),
-                    generatedVideos: shots,
-                    finalVideo: data.finalVideo,
-                    status: data.status,
-                    logs: data.logs || []
-                });
+                const data = await videosApi.getTaskStatus(taskId);
+                console.log('[Project] Loaded data:', data);
+                applyTaskData(data);
 
                 // 🆕 如果正在生成，启动轮询并切换到生成状态标签页
-                if (isGenerating || ['pending', 'generating_script', 'generating_videos', 'checking_quality', 'merging_videos'].includes(data.status)) {
+                if (isGenerating || ['pending', 'generating_script', 'generating', 'generating_videos', 'checking_quality', 'merging_videos'].includes(data.status)) {
                     startPolling(taskId);
-                    setActiveTab(1); // 切换到生成状态/日志标签页
+                    setDetailTab(1); // 切换到生成状态/日志标签页
                 }
 
                 // 如果是等待确认状态，也启动轮询但保持在Script标签页
                 if (data.status === 'waiting_confirmation') {
                     startPolling(taskId);
-                    setActiveTab(0); // 保持在Script标签页以显示确认按钮
+                    setDetailTab(0); // 保持在Script标签页以显示确认按钮
                 }
 
             } catch (err: any) {
@@ -188,42 +218,18 @@ const ProjectPage: React.FC = () => {
 
     // 🆕 轮询函数
     const startPolling = (taskId: string) => {
+        if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+        }
         const pollInterval = setInterval(async () => {
             try {
-                const response = await fetch(`http://localhost:8000/api/video-generation/task/${taskId}`);
-                if (!response.ok) {
-                    clearInterval(pollInterval);
-                    return;
-                }
-
-                const result = await response.json();
-                const data = result.data || result;
-                const shots = data.shots || [];
-
-                const shotsWithVideo = shots.map((shot: Shot) => {
-                    return {
-                        ...shot,
-                        videoData: shot
-                    };
-                });
-
-                setProjectData({
-                    taskId: data.taskId,
-                    topic: data.config?.topic || data.topic,
-                    style: data.config?.style || data.style,
-                    script: data.script,
-                    shots: shotsWithVideo,
-                    totalDuration: shots.reduce((sum: number, s: any) => sum + (s.duration || 0), 0),
-                    generatedVideos: shots,
-                    finalVideo: data.finalVideo,
-                    status: data.status,
-                    logs: data.logs || []
-                });
+                const data = await videosApi.getTaskStatus(taskId);
+                applyTaskData(data);
 
                 console.log('[Project] Polling update:', data.status, 'Progress:', data.progress);
 
                 // 如果完成或失败，停止轮询
-                if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+                if (['completed', 'partial_success', 'failed', 'cancelled'].includes(data.status)) {
                     clearInterval(pollInterval);
                     console.log('[Project] Polling stopped, status:', data.status);
                 }
@@ -231,10 +237,19 @@ const ProjectPage: React.FC = () => {
                 console.error('[Project] Polling error:', err);
             }
         }, 2000); // 每2秒轮询一次
+        pollingRef.current = pollInterval;
 
         // 清理函数
         return () => clearInterval(pollInterval);
     };
+
+    useEffect(() => {
+        return () => {
+            if (pollingRef.current) {
+                clearInterval(pollingRef.current);
+            }
+        };
+    }, []);
 
     // Initialize shots when projectData changes
     useEffect(() => {
@@ -351,42 +366,40 @@ const ProjectPage: React.FC = () => {
         if (!projectData?.taskId) return;
 
         try {
+            setConfirmingGeneration(true);
             // 从后端获取最新的任务数据，确保使用最新的shots
-            const taskResponse = await fetch(`http://localhost:8000/api/video-generation/task/${projectData.taskId}`);
-            if (!taskResponse.ok) {
-                throw new Error('Failed to fetch latest task data');
-            }
-            const taskResult = await taskResponse.json();
-            const latestData = taskResult.data || taskResult;
+            const latestData = await videosApi.getTaskStatus(projectData.taskId);
 
-            // 准备确认请求的数据
-            const confirmData = {
-                script: latestData.script || '',
-                shots: latestData.shots.map((shot: any) => ({
+            const confirmShots = (latestData.shots || []).map((shot: any) => ({
                     sequence: shot.sequence,
                     prompt: shot.prompt,
                     duration: typeof shot.duration === 'string' ? parseFloat(shot.duration.replace('s', '')) : shot.duration,
                     shotType: shot.shotType,
                     imagePath: shot.imagePath,
                     videoPath: shot.videoPath
-                })),
+                }));
+
+            console.log('[Project] Confirming generation with data:', {
+                script: latestData.script || '',
+                shots: confirmShots,
                 options: {}
-            };
-
-            console.log('[Project] Confirming generation with data:', confirmData);
-
-            const response = await fetch(`http://localhost:8000/api/video-generation/task/${projectData.taskId}/confirm`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(confirmData)
             });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'Failed to confirm generation');
-            }
+            await videosApi.confirmAndGenerate(projectData.taskId, latestData.script || '', confirmShots, {});
+            setProjectData(prev => prev ? {
+                ...prev,
+                status: 'generating_videos',
+                progress: Math.max(prev.progress || 30, 35),
+                logs: [
+                    ...(prev.logs || []),
+                    {
+                        timestamp: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+                        level: 'info',
+                        message: '已确认方案，正在启动视频生成...'
+                    }
+                ]
+            } : prev);
+            startPolling(projectData.taskId);
 
             setSnackbar({
                 open: true,
@@ -395,7 +408,7 @@ const ProjectPage: React.FC = () => {
             });
 
             // 切换到生成状态标签页
-            setActiveTab(1);
+            setDetailTab(1);
         } catch (err: any) {
             console.error('[Project] Confirm generation error:', err);
             setSnackbar({
@@ -403,7 +416,33 @@ const ProjectPage: React.FC = () => {
                 message: err.message || '确认生成失败',
                 severity: 'error'
             });
+        } finally {
+            setConfirmingGeneration(false);
         }
+    };
+
+    const handleApplyAIOperations = (operations: any[]) => {
+        setOrderedShots(prev => {
+            let shots = [...prev];
+            for (const op of operations) {
+                if (op.type === 'update_shot' && op.shot_index != null) {
+                    const i = op.shot_index;
+                    if (shots[i]) shots[i] = { ...shots[i], ...op.changes };
+                } else if (op.type === 'delete_shot' && op.shot_index != null) {
+                    shots = shots.filter((_, i) => i !== op.shot_index);
+                } else if (op.type === 'reorder_shots' && op.new_order) {
+                    shots = op.new_order.map((i: number) => shots[i]).filter(Boolean);
+                } else if (op.type === 'regenerate_shot' && op.shot_index != null) {
+                    const i = op.shot_index;
+                    if (shots[i]) shots[i] = { ...shots[i], status: 'pending', videoPath: undefined };
+                }
+            }
+            const scriptOp = operations.find(o => o.type === 'update_script');
+            if (scriptOp?.script && projectData) {
+                setProjectData({ ...projectData, script: scriptOp.script });
+            }
+            return shots;
+        });
     };
 
     const handleShotDurationChange = (index: number, newDuration: number) => {
@@ -441,7 +480,7 @@ const ProjectPage: React.FC = () => {
             animate={{ opacity: 1 }}
             sx={{
                 height: '100vh',
-                bgcolor: '#0a0a0a',
+                bgcolor: '#0d0d0d',
                 color: 'white',
                 display: 'flex',
                 flexDirection: 'column',
@@ -451,12 +490,12 @@ const ProjectPage: React.FC = () => {
             {/* 1. Top: Header */}
             <Box sx={{
                 height: HEADER_HEIGHT,
-                borderBottom: '1px solid #222',
+                borderBottom: '1px solid #333',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 px: 2,
-                bgcolor: '#111'
+                bgcolor: '#1c1c1c'
             }}>
                 <Stack direction="row" spacing={2} alignItems="center">
                     <IconButton onClick={() => navigate('/')} sx={{ color: 'white' }}>
@@ -494,32 +533,28 @@ const ProjectPage: React.FC = () => {
 
             {/* 2. Main Workspace (Flex Row) */}
             <Box sx={{ flex: 1, display: 'flex', minHeight: 0 }}>
-                {/* Left Sidebar: Shot List */}
-                <ShotList
-                    orderedShots={orderedShots}
-                    currentShotIndex={currentShotIndex}
-                    activeTab={activeTab}
-                    onTabChange={setActiveTab}
-                    onShotSelect={setCurrentShotIndex}
-                    width={leftPanelWidth}
-                />
+                {/* Left Sidebar wrapper — width controlled by ref during drag */}
+                <Box ref={leftPanelRef} style={{ width: leftPanelWidth, flexShrink: 0, overflow: 'hidden', display: 'flex' }}>
+                    <ShotList
+                        orderedShots={orderedShots}
+                        currentShotIndex={currentShotIndex}
+                        activeTab={assetTab}
+                        onTabChange={setAssetTab}
+                        onShotSelect={setCurrentShotIndex}
+                        width="100%"
+                    />
+                </Box>
 
                 {/* Drag divider: left panel */}
                 <Box
-                    onMouseDown={makeDividerHandler(() => leftPanelWidth, setLeftPanelWidth, 'left', 180, 480)}
-                    sx={{
-                        width: 4,
-                        cursor: 'col-resize',
-                        bgcolor: '#1a1a1a',
-                        flexShrink: 0,
-                        '&:hover': { bgcolor: '#FF4081' },
-                        transition: 'background-color 0.15s'
-                    }}
+                    onMouseDown={makeDividerHandler(leftPanelWidth, leftPanelRef, setLeftPanelWidth, 'left', 180, 480)}
+                    sx={{ width: 4, cursor: 'col-resize', bgcolor: '#252525', flexShrink: 0, '&:hover': { bgcolor: '#FF4081' }, transition: 'background-color 0.15s' }}
                 />
 
                 {/* Center: Video Player */}
                 <AVCanvasPlayer
                     orderedShots={orderedShots}
+                    status={projectData?.status}
                     onTimeUpdate={handleTimeUpdate}
                     onShotChange={handleShotChange}
                     onPlayStateChange={handlePlayStateChange}
@@ -528,32 +563,43 @@ const ProjectPage: React.FC = () => {
 
                 {/* Drag divider: right panel */}
                 <Box
-                    onMouseDown={makeDividerHandler(() => rightPanelWidth, setRightPanelWidth, 'right', 240, 700)}
-                    sx={{
-                        width: 4,
-                        cursor: 'col-resize',
-                        bgcolor: '#1a1a1a',
-                        flexShrink: 0,
-                        '&:hover': { bgcolor: '#FF4081' },
-                        transition: 'background-color 0.15s'
-                    }}
+                    onMouseDown={makeDividerHandler(rightPanelWidth, rightPanelRef, setRightPanelWidth, 'right', 240, 700)}
+                    sx={{ width: 4, cursor: 'col-resize', bgcolor: '#252525', flexShrink: 0, '&:hover': { bgcolor: '#FF4081' }, transition: 'background-color 0.15s' }}
                 />
 
-                {/* Right Sidebar: Script & Logs */}
-                <ScriptPanel
-                    projectData={projectData}
-                    currentShot={currentShot}
-                    currentShotIndex={currentShotIndex}
-                    activeTab={activeTab}
-                    onTabChange={setActiveTab}
-                    onEditShot={handleEditShot}
-                    onDeleteShot={handleDeleteShot}
-                    onConfirmGeneration={handleConfirmGeneration}
-                    width={rightPanelWidth}
-                />
+                {/* Right Sidebar wrapper */}
+                <Box ref={rightPanelRef} style={{ width: rightPanelWidth, flexShrink: 0, overflow: 'hidden', display: 'flex' }}>
+                    <ScriptPanel
+                        projectData={projectData}
+                        currentShot={currentShot}
+                        currentShotIndex={currentShotIndex}
+                        orderedShots={orderedShots}
+                        activeTab={detailTab}
+                        onTabChange={setDetailTab}
+                        onEditShot={handleEditShot}
+                        onDeleteShot={handleDeleteShot}
+                        onConfirmGeneration={handleConfirmGeneration}
+                        onApplyAIOperations={handleApplyAIOperations}
+                        confirmingGeneration={confirmingGeneration}
+                        width="100%"
+                    />
+                </Box>
             </Box>
 
-            {/* 3. Bottom: Timeline */}
+            {/* 3. Timeline resize handle */}
+            <Box
+                onMouseDown={handleTimelineDividerMouseDown}
+                sx={{
+                    height: 4, flexShrink: 0,
+                    cursor: 'ns-resize',
+                    bgcolor: '#1e1e1e',
+                    borderTop: '1px solid #333',
+                    '&:hover': { bgcolor: '#FF4081' },
+                    transition: 'background-color 0.15s',
+                }}
+            />
+
+            {/* 4. Bottom: Timeline */}
             <MultiTrackTimeline
                 orderedShots={orderedShots}
                 currentShotIndex={currentShotIndex}
@@ -562,6 +608,7 @@ const ProjectPage: React.FC = () => {
                 onSeek={handleSeek}
                 isPlaying={isPlaying}
                 onShotDurationChange={handleShotDurationChange}
+                height={timelineHeight}
             />
 
             {/* Edit Shot Dialog */}

@@ -76,6 +76,8 @@ export const useWorkflowStore = create<any>((set, get) => ({
               content = `🎥 正在渲染镜头 (${mapped.filter(s=>s.videoPath).length}/${mapped.length})...`;
           } else if (task.status === 'completed') {
               content = `🎉 视频制作完成！`;
+          } else if (task.status === 'partial_success') {
+              content = `⚠️ 视频部分生成完成，部分镜头失败，请查看日志。`;
           }
 
           get().updateMessage(msgId!, {
@@ -88,7 +90,7 @@ export const useWorkflowStore = create<any>((set, get) => ({
         }
         
         if (task.status === 'waiting_confirmation' && cur.stage !== 'editing') set({ stage: 'editing' });
-        if (task.status === 'completed') set({ stage: 'completed' });
+        if (task.status === 'completed' || task.status === 'partial_success') set({ stage: 'completed' });
       }, 600000);
     } catch (err: any) {
       console.warn("Sync error:", err);
