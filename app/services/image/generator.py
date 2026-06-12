@@ -7,7 +7,6 @@ from typing import Dict, Optional, Tuple, List, Union
 from PIL import Image
 from app.core.config import settings
 from app.prompts.base import render_prompt
-import litellm
 import json
 import time
 from abc import ABC, abstractmethod
@@ -41,7 +40,7 @@ class GoogleImagenAdapter(ImageGeneratorBase):
     """Google Imagen 3适配器"""
 
     def __init__(self):
-        self.generator = GoogleImagenGenerator(model="gemini-3-pro-image-preview")
+        self.generator = GoogleImagenGenerator(model="gemini-3-pro-image")
 
     def is_available(self) -> bool:
         return self.generator.is_available()

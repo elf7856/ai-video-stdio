@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from enum import Enum
 import os
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from app.core.config import settings
 
@@ -63,8 +64,7 @@ class VideoQualityEvaluator:
     """视频质量评估器"""
 
     def __init__(self):
-        # 初始化 LLM
-        genai.configure(api_key=settings.google_api_key)
+        self._client = genai.Client(api_key=settings.google_api_key)
 
         # 质量阈值
         self.min_overall_score = 0.6  # 最低综合评分
@@ -233,10 +233,10 @@ class VideoQualityEvaluator:
 }}
 """
 
-            model = genai.GenerativeModel('gemini-2.0-flash-exp')
-            response = await model.generate_content_async(
-                analysis_prompt,
-                generation_config=genai.GenerationConfig(
+            response = await self._client.aio.models.generate_content(
+                model='gemini-3-flash',
+                contents=analysis_prompt,
+                config=types.GenerateContentConfig(
                     temperature=0.3,
                     response_mime_type="application/json"
                 )

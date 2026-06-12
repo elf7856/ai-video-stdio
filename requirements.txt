@@ -7,12 +7,9 @@ pydantic-settings>=2.0.0
 httpx[socks]>=0.23.1
 
 # LLM and AI
-litellm>=1.70.0
 google-genai>=0.1.0
 
 # Video processing
-moviepy>=1.0.3
-opencv-python>=4.8.0
 ffmpeg-python>=0.2.0
 pytube>=15.0.0
 

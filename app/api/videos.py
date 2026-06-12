@@ -11,10 +11,7 @@ import logging
 
 from app.models.video import Video, VideoEdit, VideoCreate, VideoResponse, VideoEditCreate, VideoEditResponse
 # 使用轻量级处理器（基于 ffmpeg）
-try:
-    from app.services.video.processor_lite import VideoProcessor
-except ImportError:
-    from app.services.video.processor import VideoProcessor
+from app.services.video.processor_lite import VideoProcessor
 from app.services.video.manager import VideoProcessingManager
 from app.services.llm.analyzer import VideoAnalyzer
 from app.core.config import settings

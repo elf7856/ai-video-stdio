@@ -13,10 +13,7 @@ from dataclasses import dataclass
 
 from app.services.llm.service import LLMService, ProviderType
 # 使用轻量级处理器（基于 ffmpeg，不需要 cv2/moviepy）
-try:
-    from app.services.video.processor_lite import VideoProcessor
-except ImportError:
-    from app.services.video.processor import VideoProcessor
+from app.services.video.processor_lite import VideoProcessor
 from app.services.video.downloader import VideoDownloader
 from app.core.config import settings
 

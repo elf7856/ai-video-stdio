@@ -147,14 +147,32 @@ class VideoProcessor:
                     '-y'
                 ]
 
-                subprocess.run(cmd, capture_output=True, check=True)
-                return True
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    return True
+                except subprocess.CalledProcessError as copy_error:
+                    logger.warning(f"ffmpeg copy 合并失败，尝试重编码合并: {copy_error.stderr}")
+                    fallback_cmd = [
+                        'ffmpeg',
+                        '-f', 'concat',
+                        '-safe', '0',
+                        '-i', list_file,
+                        '-c:v', 'libx264',
+                        '-preset', 'veryfast',
+                        '-crf', '20',
+                        '-c:a', 'aac',
+                        '-movflags', '+faststart',
+                        output_path,
+                        '-y'
+                    ]
+                    subprocess.run(fallback_cmd, capture_output=True, text=True, check=True)
+                    return True
 
             finally:
                 os.unlink(list_file)
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"ffmpeg 合并视频失败: {e}")
+            logger.error(f"ffmpeg 合并视频失败: {e.stderr or e}")
             return False
         except Exception as e:
             logger.error(f"合并视频失败: {e}")

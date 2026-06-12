@@ -13,10 +13,7 @@ from app import dependencies
 # 导入所有需要实例化的服务
 from app.services.video.downloader import VideoDownloader
 # 使用轻量级处理器（基于 ffmpeg，不需要 cv2/moviepy）
-try:
-    from app.services.video.processor_lite import VideoProcessor
-except ImportError:
-    from app.services.video.processor import VideoProcessor
+from app.services.video.processor_lite import VideoProcessor
 from app.services.llm.analyzer import VideoAnalyzer
 from app.services.image.generator import ImageServiceManager
 from app.services.tts.generator import TTSGenerator
@@ -30,6 +27,7 @@ from app.api.ai_director import router as ai_director_router
 from app.api.audio import router as audio_router
 from app.api.scripts import router as scripts_router
 from app.api.video_generation import router as video_generation_router
+from app.api.video_source import router as video_source_router
 from app.api.smart_generation import router as smart_generation_router
 from app.api.conversation import router as conversation_router
 from app.api.video_recreation import router as video_recreation_router
@@ -103,6 +101,7 @@ app.include_router(auth.router)  # 新增
 app.include_router(users.router) # 新增
 app.include_router(scripts_router)
 app.include_router(video_generation_router)
+app.include_router(video_source_router)
 app.include_router(smart_generation_router)
 app.include_router(conversation_router, prefix="/api/conversation", tags=["conversation"])
 app.include_router(video_recreation_router)
@@ -211,4 +210,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=settings.debug
-    ) 
+    )

@@ -1,7 +1,24 @@
 from pydantic_settings import BaseSettings
-from pydantic import Field
-from typing import Optional, List
+from pydantic import Field, field_validator
+from typing import Optional, Any
 import os
+import json
+
+
+def _strip_inline_comment(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.split("#", 1)[0].strip().strip('"').strip("'")
+    return value
+
+
+def _strip_wrapping_quotes(value: Any) -> Any:
+    if isinstance(value, str):
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            return value[1:-1]
+        return value
+    return value
+
 
 class Settings(BaseSettings):
     # 应用配置
@@ -12,6 +29,8 @@ class Settings(BaseSettings):
     port: int = 8000
     
     # API Keys
+    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
     elevenlabs_api_key: Optional[str] = Field(default=None, alias="ELEVENLABS_API_KEY")
     
     # 图像生成API Keys
@@ -28,7 +47,10 @@ class Settings(BaseSettings):
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY", description="Google Gemini API密钥")
     pexels_api_key: str = Field(default="", alias="PEXELS_API_KEY", description="Pexels API密钥")
 
-    # Vertex AI 配置
+    # 环境模式: dev → AI Studio, prod → Vertex AI
+    env: str = Field(default="dev", alias="ENV")
+
+    # Vertex AI 配置（ENV=prod 时生效）
     vertex_project_id: Optional[str] = Field(default=None, alias="VERTEX_PROJECT_ID")
     vertex_location: str = Field(default="us-central1", alias="VERTEX_LOCATION")
     vertex_api_key: Optional[str] = Field(default=None, alias="VERTEX_API_KEY")
@@ -62,11 +84,45 @@ class Settings(BaseSettings):
     max_video_duration: int = 300  # 5分钟
     video_quality: str = "medium"
     fps: int = 30
+    video_understanding_model: str = Field(default="gemini-3.1-flash-lite", alias="VIDEO_UNDERSTANDING_MODEL")
+    video_understanding_media_resolution: str = Field(default="low", alias="VIDEO_UNDERSTANDING_MEDIA_RESOLUTION")
+    video_understanding_use_proxy: bool = Field(default=True, alias="VIDEO_UNDERSTANDING_USE_PROXY")
+    video_understanding_proxy_max_width: int = Field(default=640, alias="VIDEO_UNDERSTANDING_PROXY_MAX_WIDTH")
+    video_understanding_proxy_fps: float = Field(default=1.0, alias="VIDEO_UNDERSTANDING_PROXY_FPS")
+    video_understanding_proxy_crf: int = Field(default=32, alias="VIDEO_UNDERSTANDING_PROXY_CRF")
     
     # 图像生成配置
     default_image_model: str = "stabilityai/stable-diffusion-2-1"
     default_image_provider: str = "google_imagen"  # google_imagen, stability, replicate, leonardo, midjourney, local
     image_size: tuple = (512, 512)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def strip_wrapping_quotes(cls, value: Any) -> Any:
+        return _strip_wrapping_quotes(value)
+
+    @field_validator("max_file_size", "max_video_duration", mode="before")
+    @classmethod
+    def parse_int_with_inline_comment(cls, value: Any) -> Any:
+        return _strip_inline_comment(value)
+
+    @field_validator("default_image_provider", mode="before")
+    @classmethod
+    def parse_provider_with_inline_comment(cls, value: Any) -> Any:
+        return _strip_inline_comment(value)
+
+    @field_validator("image_size", mode="before")
+    @classmethod
+    def parse_image_size(cls, value: Any) -> Any:
+        value = _strip_inline_comment(value)
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                parsed = [part.strip() for part in value.split(",")]
+            if isinstance(parsed, (list, tuple)) and len(parsed) == 2:
+                return (int(parsed[0]), int(parsed[1]))
+        return value
 
     # 图像生成API配置
     stability_model: str = "stable-diffusion-xl-1024-v1-0"
@@ -160,4 +216,4 @@ def get_available_llm_providers() -> list:
 
 # 确保目录存在
 os.makedirs(settings.upload_dir, exist_ok=True)
-os.makedirs(settings.output_dir, exist_ok=True) 
+os.makedirs(settings.output_dir, exist_ok=True)

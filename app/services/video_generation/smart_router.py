@@ -12,7 +12,8 @@ import json
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from app.core.config import settings
 from app.prompts.style_extraction_prompt import STYLE_EXTRACTION_PROMPT
@@ -49,8 +50,7 @@ class SmartVideoRouter:
     IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
 
     def __init__(self):
-        # 初始化 LLM
-        genai.configure(api_key=settings.google_api_key)
+        self._client = genai.Client(api_key=settings.google_api_key)
 
     def analyze_input(self, user_input: str) -> InputAnalysis:
         """
@@ -145,10 +145,10 @@ class SmartVideoRouter:
         try:
             style_prompt = STYLE_EXTRACTION_PROMPT.format(text=text)
 
-            model = genai.GenerativeModel('gemini-2.0-flash-exp')
-            response = await model.generate_content_async(
-                style_prompt,
-                generation_config=genai.GenerationConfig(
+            response = await self._client.aio.models.generate_content(
+                model='gemini-3-flash',
+                contents=style_prompt,
+                config=types.GenerateContentConfig(
                     temperature=0.3,
                     response_mime_type="application/json"
                 )

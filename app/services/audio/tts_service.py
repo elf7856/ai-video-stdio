@@ -5,7 +5,6 @@ from typing import Dict, Optional
 from app.core.config import settings
 from app.prompts.base import render_prompt
 import tempfile
-import litellm
 from app.services.llm.service import llm_service
 import logging
 

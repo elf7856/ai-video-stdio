@@ -4,6 +4,7 @@
 
 # Python
 __pycache__
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -28,6 +29,7 @@ coverage.xml
 venv/
 env/
 ENV/
+.venv/
 
 # IDE
 .vscode/
@@ -45,19 +47,37 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
-uploads/*
-outputs/*
+uploads/
+outputs/
+temp/
+logs/
+video_creator.db
 *.mp4
 *.avi
 *.mov
 *.mkv
 *.wav
 *.mp3
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+
+# Frontend build/dependency artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+node_modules/
+dist/
+build/
 
 # Test files
 tests/
 test_*.py
 *_test.py
+.pytest_cache/
 
 # Documentation
 docs/
@@ -65,9 +85,7 @@ docs/
 README.md
 
 # Docker
-Dockerfile
 docker-compose.yml
-.dockerignore
 
 # Environment files
 .env

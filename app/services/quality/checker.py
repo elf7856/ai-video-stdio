@@ -13,13 +13,19 @@ import json
 import logging
 import tempfile
 import base64
+import subprocess
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
-import cv2
-import numpy as np
-from moviepy.editor import VideoFileClip
+try:
+    import cv2
+    import numpy as np
+    CV_QUALITY_AVAILABLE = True
+except ImportError:
+    cv2 = None
+    np = None
+    CV_QUALITY_AVAILABLE = False
 
 from .models import (
     QualityCheckConfig,
@@ -192,6 +198,10 @@ class VideoQualityChecker:
         """
         keyframes = []
 
+        if not CV_QUALITY_AVAILABLE:
+            logger.info("OpenCV/Numpy 未安装，跳过关键帧提取")
+            return keyframes
+
         try:
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
@@ -237,24 +247,21 @@ class VideoQualityChecker:
         result = TechnicalQualityResult()
 
         try:
-            clip = VideoFileClip(video_path)
-
-            # 基本属性
-            result.resolution = f"{clip.size[0]}x{clip.size[1]}"
-            result.fps = clip.fps
-            result.duration = clip.duration
+            metadata = self._probe_video_metadata(video_path)
+            width = metadata["width"]
+            height = metadata["height"]
+            result.resolution = f"{width}x{height}"
+            result.fps = metadata["fps"]
+            result.duration = metadata["duration"]
             result.file_size = os.path.getsize(video_path)
 
             # 计算比特率 (kbps)
             if result.duration > 0:
                 result.bitrate = (result.file_size * 8) / (result.duration * 1000)
 
-            clip.close()
-
             # 评估各项指标
 
             # 分辨率评分
-            width, height = clip.size
             if width >= 1920 or height >= 1080:
                 resolution_score = 1.0
             elif width >= 1280 or height >= 720:
@@ -313,12 +320,60 @@ class VideoQualityChecker:
 
         return result
 
+    def _probe_video_metadata(self, video_path: str) -> Dict[str, float]:
+        """使用 ffprobe 获取视频基础元数据，避免依赖 moviepy。"""
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,avg_frame_rate,duration",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            video_path,
+        ]
+        completed = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(completed.stdout)
+        stream = (data.get("streams") or [{}])[0]
+        fmt = data.get("format") or {}
+
+        fps = self._parse_frame_rate(stream.get("avg_frame_rate", "0/1"))
+        duration = float(stream.get("duration") or fmt.get("duration") or 0)
+
+        return {
+            "width": int(stream.get("width") or 0),
+            "height": int(stream.get("height") or 0),
+            "fps": fps,
+            "duration": duration,
+        }
+
+    def _parse_frame_rate(self, value: str) -> float:
+        if not value:
+            return 0
+        if "/" not in value:
+            return float(value)
+        numerator, denominator = value.split("/", 1)
+        denominator_value = float(denominator)
+        if denominator_value == 0:
+            return 0
+        return float(numerator) / denominator_value
+
     def _check_visual_consistency(
         self,
         keyframes: List[str]
     ) -> VisualConsistencyResult:
         """检查视觉一致性"""
         result = VisualConsistencyResult()
+
+        if not CV_QUALITY_AVAILABLE:
+            result.score = 0.5
+            result.level = QualityLevel.ACCEPTABLE
+            result.suggestions.append("OpenCV/Numpy 未安装，已跳过视觉一致性检查")
+            return result
 
         if len(keyframes) < 2:
             result.score = 1.0
@@ -375,6 +430,9 @@ class VideoQualityChecker:
         )
 
         try:
+            if not CV_QUALITY_AVAILABLE:
+                return analysis
+
             img = cv2.imread(frame_path)
             if img is None:
                 return analysis
@@ -407,7 +465,7 @@ class VideoQualityChecker:
 
         return analysis
 
-    def _extract_dominant_colors(self, img: np.ndarray, n_colors: int = 3) -> List[str]:
+    def _extract_dominant_colors(self, img: Any, n_colors: int = 3) -> List[str]:
         """提取主要颜色"""
         try:
             # 缩小图像以加速处理

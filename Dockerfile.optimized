@@ -1,0 +1,61 @@
+# ============================================
+# 优化的 Dockerfile - 减少镜像大小
+# ============================================
+
+# 使用更小的基础镜像
+FROM python:3.12-slim AS base
+
+# 设置工作目录
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+
+# 安装系统依赖（只安装必需的）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# ============================================
+# 依赖安装阶段
+# ============================================
+FROM base AS dependencies
+
+# 复制 requirements 文件
+COPY requirements.minimal.txt .
+
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir -r requirements.minimal.txt
+
+# ============================================
+# 最终镜像
+# ============================================
+FROM base AS final
+
+# 从依赖阶段复制已安装的包
+COPY --from=dependencies /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=dependencies /usr/local/bin /usr/local/bin
+
+# 复制运行后端所需文件，避免前端源码、输出产物和开发缓存进入镜像
+COPY app ./app
+COPY requirements.minimal.txt .
+COPY start.sh .
+
+# 创建必要的目录
+RUN mkdir -p uploads outputs logs && chmod +x start.sh
+
+# 设置环境变量
+ENV PYTHONPATH=/app
+
+# 暴露端口
+EXPOSE ${PORT:-8000}
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
+
+# 启动命令
+CMD ["./start.sh"]

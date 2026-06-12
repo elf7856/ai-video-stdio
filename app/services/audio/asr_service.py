@@ -500,40 +500,32 @@ class ASRService:
     
     def _extract_audio_from_video(self, video_path: str) -> str:
         """从视频中提取音频"""
+        audio_path = tempfile.mktemp(suffix='.wav')
+
         try:
-            from moviepy.editor import VideoFileClip
-            import warnings
-            
-            # 抑制moviepy的警告信息
-            warnings.filterwarnings("ignore")
-            
-            # 创建临时音频文件
-            audio_path = tempfile.mktemp(suffix='.wav')
-            
-            # 提取音频
-            video = VideoFileClip(video_path)
-            audio = video.audio
-            
-            if audio is None:
-                video.close()
-                raise Exception("视频中没有音频轨道")
-            
-            # 导出音频为WAV格式，抑制输出
-            audio.write_audiofile(
-                audio_path, 
-                verbose=False, 
-                logger=None
-            )
-            
-            # 关闭资源
-            audio.close()
-            video.close()
-            
-            return audio_path
-            
-        except Exception as e:
-            logger.error(f"音频提取失败: {str(e)}")
-            raise Exception(f"音频提取失败: {str(e)}")
+            import subprocess
+
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i", video_path,
+                "-vn",
+                "-ac", "1",
+                "-ar", "16000",
+                "-acodec", "pcm_s16le",
+                audio_path,
+            ]
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                return audio_path
+        except Exception as ffmpeg_error:
+            logger.error(f"ffmpeg 音频提取失败: {ffmpeg_error}")
+            if os.path.exists(audio_path):
+                try:
+                    os.remove(audio_path)
+                except OSError:
+                    pass
+            raise Exception(f"音频提取失败: {ffmpeg_error}")
     
     def get_available_providers(self) -> List[str]:
         """获取可用的ASR提供商列表"""
@@ -617,4 +609,4 @@ async def test_asr_service():
         print(f"\n测试音频文件不存在: {test_audio}")
 
 if __name__ == "__main__":
-    asyncio.run(test_asr_service()) 
+    asyncio.run(test_asr_service())

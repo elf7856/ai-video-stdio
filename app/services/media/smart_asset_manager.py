@@ -9,7 +9,8 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from app.services.media.pexels import PexelsClient
 from app.services.media.shutterstock import ShutterstockClient
@@ -92,8 +93,7 @@ class SmartAssetManager:
         self.pexels = PexelsClient()
         self.shutterstock = ShutterstockClient()
 
-        # 初始化 LLM
-        genai.configure(api_key=settings.google_api_key)
+        self._client = genai.Client(api_key=settings.google_api_key)
 
         # 质量阈值
         self.min_quality_score = 0.6
@@ -178,10 +178,10 @@ class SmartAssetManager:
         try:
             extraction_prompt = KEYWORD_EXTRACTION_PROMPT.format(prompt=prompt)
 
-            model = genai.GenerativeModel('gemini-2.0-flash-exp')
-            response = await model.generate_content_async(
-                extraction_prompt,
-                generation_config=genai.GenerationConfig(
+            response = await self._client.aio.models.generate_content(
+                model='gemini-3-flash',
+                contents=extraction_prompt,
+                config=types.GenerateContentConfig(
                     temperature=0.3,
                     response_mime_type="application/json"
                 )
@@ -234,10 +234,10 @@ class SmartAssetManager:
                 platform=platform or "无指定平台"
             )
 
-            model = genai.GenerativeModel('gemini-2.0-flash-exp')
-            response = await model.generate_content_async(
-                inference_prompt,
-                generation_config=genai.GenerationConfig(
+            response = await self._client.aio.models.generate_content(
+                model='gemini-3-flash',
+                contents=inference_prompt,
+                config=types.GenerateContentConfig(
                     temperature=0.3,
                     response_mime_type="application/json"
                 )
@@ -546,10 +546,10 @@ class SmartAssetManager:
         try:
             detection_prompt = SPECIAL_EFFECTS_DETECTION_PROMPT.format(prompt=prompt)
 
-            model = genai.GenerativeModel('gemini-2.0-flash-exp')
-            response = await model.generate_content_async(
-                detection_prompt,
-                generation_config=genai.GenerationConfig(
+            response = await self._client.aio.models.generate_content(
+                model='gemini-3-flash',
+                contents=detection_prompt,
+                config=types.GenerateContentConfig(
                     temperature=0.3,
                     response_mime_type="application/json"
                 )

@@ -19,10 +19,7 @@ router = APIRouter(prefix="/api/ai-director", tags=["AI导演"])
 # 依赖导入
 from app.services.video.downloader import VideoDownloader
 # 使用轻量级处理器（基于 ffmpeg）
-try:
-    from app.services.video.processor_lite import VideoProcessor
-except ImportError:
-    from app.services.video.processor import VideoProcessor
+from app.services.video.processor_lite import VideoProcessor
 from app.services.llm.analyzer import VideoAnalyzer
 from app.services.image.generator import ImageServiceManager
 from app.services.tts.generator import TTSGenerator

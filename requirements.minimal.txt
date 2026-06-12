@@ -11,12 +11,14 @@ python-multipart>=0.0.6
 python-dotenv>=1.0.0
 pydantic-settings>=2.0.0
 pydantic>=2.5.0
+email-validator>=2.1.0
 
 # HTTP Client
 httpx[socks]>=0.23.1
+aiohttp>=3.9.0
+beautifulsoup4>=4.12.0
 
 # LLM and AI (API-based, no local models)
-litellm>=1.70.0
 google-genai>=0.1.0
 
 # 轻量级视频处理（仅使用 ffmpeg CLI）
@@ -36,14 +38,14 @@ elevenlabs>=0.2.26
 sqlalchemy>=2.0.0
 alembic>=1.12.0
 
+# Auth
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
 # Utilities
 rich>=13.7.0
 aiofiles>=23.2.0
 Jinja2>=3.0.0
-
-# API clients（使用外部服务代替本地模型）
-replicate>=0.22.0
-stability-sdk>=0.8.0
 
 # Google APIs
 google-api-python-client>=2.108.0
@@ -53,8 +55,7 @@ google-auth-httplib2>=0.2.0
 # ============================================
 # 移除的重量级依赖（总计约 5-7 GB）：
 # ============================================
-# ❌ torch>=2.0.0 (2-3 GB)
-# ❌ transformers>=4.35.0 (1-2 GB)
+
 # ❌ diffusers>=0.24.0 (500 MB)
 # ❌ openai-whisper>=20231117 (500 MB-1 GB)
 # ❌ opencv-python>=4.8.0 (200-500 MB)

@@ -10,10 +10,11 @@ uvicorn>=0.24.0
 python-multipart>=0.0.6
 python-dotenv>=1.0.0
 pydantic-settings>=2.0.0
+pydantic>=2.5.0
+email-validator>=2.1.0
 httpx[socks]>=0.23.1
 
 # LLM and AI（使用 API，不需要本地模型）
-litellm>=1.70.0
 google-genai>=0.1.0
 
 # 基础图像处理（不需要 torch/transformers）
@@ -27,15 +28,14 @@ elevenlabs>=0.2.26
 sqlalchemy>=2.0.0
 alembic>=1.12.0
 
+# Auth
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
 # Utilities
 rich>=13.7.0
-pydantic>=2.5.0
 aiofiles>=23.2.0
 Jinja2>=3.0.0
-
-# API clients（使用外部服务）
-replicate>=0.22.0  # 视频生成
-stability-sdk>=0.8.0  # 图像生成
 
 # Google APIs
 google-api-python-client>=2.108.0
@@ -46,9 +46,9 @@ google-auth-httplib2>=0.2.0
 # 说明：
 # ============================================
 # 移除的重量级依赖：
-# - torch (2-3 GB) - 使用 Replicate API 代替
+# - torch (2-3 GB) - 使用云 API 代替
 # - transformers (1-2 GB) - 使用云 API 代替
-# - diffusers (500 MB) - 使用 Stability AI API 代替
+# - diffusers (500 MB) - 使用云 API 代替
 # - openai-whisper (1 GB) - 使用 OpenAI API 代替
 # - opencv-python (500 MB) - 使用 ffmpeg 代替
 # - moviepy (200 MB) - 使用 ffmpeg 代替
@@ -62,7 +62,7 @@ google-auth-httplib2>=0.2.0
 # 5. 更容易维护
 #
 # 权衡：
-# - 需要外部 API keys（Replicate, OpenAI, Stability AI）
+# - 可选平台能力需要额外 API keys
 # - API 调用有成本（但通常比自托管便宜）
 # - 需要网络连接
 # ============================================

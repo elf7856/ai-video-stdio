@@ -55,7 +55,7 @@ class APIManager:
             service_type="llm",
             provider="google",
             config_required=["GOOGLE_API_KEY"],
-            dependencies=["google.generativeai"],
+            dependencies=["google.genai"],
             description="Google Gemini模型，免费额度较大",
             priority=1
         )
@@ -87,7 +87,7 @@ class APIManager:
             service_type="image",
             provider="google",
             config_required=["GOOGLE_API_KEY"],
-            dependencies=["google.generativeai"],
+            dependencies=["google.genai"],
             description="Google Imagen 3图像生成",
             priority=1
         )
