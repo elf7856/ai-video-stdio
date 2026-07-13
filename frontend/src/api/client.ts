@@ -4,9 +4,14 @@
  */
 import axios from 'axios';
 
+const apiBaseUrl =
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? '' : 'http://localhost:8000');
+
 // 创建axios实例
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000', // 优先使用环境变量
+  baseURL: apiBaseUrl,
   timeout: 120000, // 2分钟超时（AI生成需要较长时间）
   headers: {
     'Content-Type': 'application/json',

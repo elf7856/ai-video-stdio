@@ -9,7 +9,9 @@ export const getFullUrl = (path?: string): string => {
   if (path.startsWith('http')) return path;
   if (path.startsWith('/assets/') || path.startsWith('assets/')) return path; // Frontend asset
   
-  const baseUrl = apiClient.defaults.baseURL?.replace(/\/$/, '') || 'http://localhost:8000';
+  const baseUrl =
+    apiClient.defaults.baseURL?.replace(/\/$/, '') ||
+    (typeof window !== 'undefined' ? window.location.origin : '');
   
   // 1. 先移除开头的 ./ 或 /
   let cleanPath = path.replace(/^(\.\/|\/)/, '');

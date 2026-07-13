@@ -5,6 +5,9 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import HowToRegIcon from '@mui/icons-material/HowToReg';
 import EditIcon from '@mui/icons-material/Edit';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import LinkIcon from '@mui/icons-material/Link';
+import MovieCreationIcon from '@mui/icons-material/MovieCreation';
 import { Link as RouterLink } from 'react-router-dom';
 import heroVideo from '../assets/videos/flow.mp4';
 import t1 from '../assets/templates/t1.jpg';
@@ -14,6 +17,14 @@ import t4 from '../assets/templates/t4.jpg';
 import t5 from '../assets/templates/t5.jpg';
 
 const templateImages = [t1, t2, t3, t4, t5];
+const heroCapabilities = ['Idea or URL', 'Script plan', 'Storyboard review', 'AI video render'];
+const useCases = [
+    'Product demos',
+    'Short ads',
+    'Knowledge explainers',
+    'Character stories',
+    'Social posts',
+];
 
 // 使用本地视频文件，更稳定
 const videoURL = heroVideo;
@@ -170,33 +181,69 @@ const HomePage: React.FC = () => {
                 </video>
                 <Box sx={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0, 0, 0, 0.3)' }} />
                 
-                <Container maxWidth="md" sx={{ position: 'relative', zIndex: 1 }}>
+                <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1 }}>
                     <Box>
                         <Typography
                             variant="h1"
                             component="h1"
                             sx={{
-                                fontSize: { xs: '3.5rem', md: '6rem' },
+                                fontSize: { xs: '3.5rem', md: '7rem' },
                                 fontWeight: 800,
                                 color: '#fff', // Pure white
-                                mb: 2,
+                                mb: 1,
                                 textShadow: '0 4px 20px rgba(0,0,0,0.5)'
                             }}
                         >
-                            Create Stunning Videos
+                            Orenix AI
                         </Typography>
                     </Box>
+                    <Typography
+                        variant="h3"
+                        component="p"
+                        sx={{
+                            color: 'rgba(255,255,255,0.96)',
+                            fontWeight: 700,
+                            fontSize: { xs: '1.55rem', md: '2.65rem' },
+                            lineHeight: 1.18,
+                            maxWidth: 900,
+                            mx: 'auto',
+                            textShadow: '0 3px 18px rgba(0,0,0,0.55)',
+                        }}
+                    >
+                        Turn an idea, URL, or product brief into a scripted, storyboarded AI video.
+                    </Typography>
                     <Box>
                         <Typography variant="h5" sx={{ 
-                            my: 4, 
+                            mt: 3,
+                            mb: 4,
                             color: 'rgba(255,255,255,0.9)', 
                             fontWeight: 400, 
-                            maxWidth: 600, 
+                            maxWidth: 760,
                             mx: 'auto',
+                            lineHeight: 1.55,
                             textShadow: '0 2px 10px rgba(0,0,0,0.5)'
                         }}>
-                            Transform your ideas into cinematic reality with our AI-powered video agent.
+                            Orenix plans the script, breaks it into editable shots, lets you review the storyboard, then renders the final video.
                         </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 1.25, mb: 4 }}>
+                        {heroCapabilities.map((item) => (
+                            <Box
+                                key={item}
+                                sx={{
+                                    px: 1.75,
+                                    py: 0.8,
+                                    border: '1px solid rgba(255,255,255,0.28)',
+                                    bgcolor: 'rgba(0,0,0,0.2)',
+                                    backdropFilter: 'blur(8px)',
+                                    borderRadius: 2,
+                                }}
+                            >
+                                <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.92)', fontWeight: 600 }}>
+                                    {item}
+                                </Typography>
+                            </Box>
+                        ))}
                     </Box>
                     <Box>
                         <Button
@@ -231,7 +278,7 @@ const HomePage: React.FC = () => {
                                 }
                             }}
                         >
-                            Create
+                            Start a Video
                         </Button>
                     </Box>
                 </Container>
@@ -240,27 +287,33 @@ const HomePage: React.FC = () => {
             {/* How it Works Section */}
             <Box sx={{ py: 16, bgcolor: '#020202' }}>
                 <Container>
-                    <Typography variant="h2" textAlign="center" sx={{ mb: 10, fontWeight: 800, letterSpacing: '-0.02em', color: '#fff' }}>
-                        How It Works
-                    </Typography>
+                    <Box sx={{ textAlign: 'center', mb: 10 }}>
+                        <Typography variant="h2" sx={{ fontWeight: 800, letterSpacing: 0, color: '#fff', mb: 2 }}>
+                            From Brief To Video
+                        </Typography>
+                        <Typography variant="h6" sx={{ color: '#9ca3af', maxWidth: 760, mx: 'auto', lineHeight: 1.6 }}>
+                            The product is built around control: generate the plan first, adjust the script and shot language, then spend video credits on the version you approve.
+                        </Typography>
+                    </Box>
                     <Grid container spacing={6}>
                         {[
-                            { icon: <HowToRegIcon sx={{ fontSize: 48 }} />, title: '1. Describe', description: 'Enter your video concept, style, and requirements.' },
-                            { icon: <EditIcon sx={{ fontSize: 48 }} />, title: '2. Generate', description: 'AI agents write the script, direct shots, and render video.' },
-                            { icon: <RocketLaunchIcon sx={{ fontSize: 48 }} />, title: '3. Launch', description: 'Export your masterpiece and share it with the world.' },
+                            { icon: <HowToRegIcon sx={{ fontSize: 42 }} />, title: '1. Brief', description: 'Start with a topic, webpage, product note, or rough creative direction.' },
+                            { icon: <AutoAwesomeIcon sx={{ fontSize: 42 }} />, title: '2. Plan', description: 'AI agents write the script, choose the content strategy, and create shot-level prompts.' },
+                            { icon: <EditIcon sx={{ fontSize: 42 }} />, title: '3. Review', description: 'Edit the script, voiceover, visual description, camera direction, and each shot before rendering.' },
+                            { icon: <RocketLaunchIcon sx={{ fontSize: 42 }} />, title: '4. Render', description: 'Generate images, render videos, merge the shots, and export the finished piece.' },
                         ].map((step, index) => (
-                            <Grid item xs={12} md={4} key={index}>
+                            <Grid item xs={12} md={3} key={index}>
                                 <Box sx={{ height: '100%' }}>
                                     <Card sx={{ 
-                                        textAlign: 'center', 
-                                        p: 5, 
+                                        textAlign: 'left',
+                                        p: 3,
                                         height: '100%', 
                                         display: 'flex', 
                                         flexDirection: 'column', 
-                                        alignItems: 'center',
+                                        alignItems: 'flex-start',
                                         bgcolor: '#0a0a0a', // Darker card
                                         border: '1px solid #222', // Subtle border
-                                        borderRadius: 8,
+                                        borderRadius: 2,
                                         transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                                         '&:hover': {
                                             transform: 'translateY(-8px)',
@@ -279,8 +332,8 @@ const HomePage: React.FC = () => {
                                             {step.icon}
                                         </Box>
                                         <CardContent sx={{ p: 0 }}>
-                                            <Typography variant="h4" sx={{ mb: 2, fontWeight: 700, fontSize: '1.5rem' }}>{step.title}</Typography>
-                                            <Typography variant="body1" color="#888" sx={{ lineHeight: 1.8, fontSize: '1.1rem' }}>{step.description}</Typography>
+                                            <Typography variant="h4" sx={{ mb: 2, fontWeight: 700, fontSize: '1.25rem' }}>{step.title}</Typography>
+                                            <Typography variant="body1" color="#888" sx={{ lineHeight: 1.7, fontSize: '0.98rem' }}>{step.description}</Typography>
                                         </CardContent>
                                     </Card>
                                 </Box>
@@ -293,9 +346,38 @@ const HomePage: React.FC = () => {
             {/* Featured Templates Section */}
             <Box sx={{ py: 16, bgcolor: '#050505' }}>
                 <Container>
-                    <Typography variant="h2" textAlign="center" sx={{ mb: 10, fontWeight: 800, letterSpacing: '-0.02em', color: '#fff' }}>
-                        Featured Templates
-                    </Typography>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', md: 'flex-end' }, flexDirection: { xs: 'column', md: 'row' }, gap: 3, mb: 8 }}>
+                        <Box>
+                            <Typography variant="h2" sx={{ fontWeight: 800, letterSpacing: 0, color: '#fff', mb: 2 }}>
+                                Built For Repeatable Video Work
+                            </Typography>
+                            <Typography variant="h6" sx={{ color: '#9ca3af', maxWidth: 720, lineHeight: 1.6 }}>
+                                Use it when one prompt is not enough and you need a planned script, editable shots, and a final video you can iterate on.
+                            </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, maxWidth: 420 }}>
+                            {useCases.map((item, index) => (
+                                <Box
+                                    key={item}
+                                    sx={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 0.75,
+                                        px: 1.4,
+                                        py: 0.75,
+                                        borderRadius: 2,
+                                        bgcolor: alpha(index % 2 === 0 ? theme.palette.primary.main : theme.palette.secondary.main, 0.14),
+                                        border: `1px solid ${alpha(index % 2 === 0 ? theme.palette.primary.main : theme.palette.secondary.main, 0.28)}`,
+                                    }}
+                                >
+                                    {index === 0 ? <MovieCreationIcon sx={{ fontSize: 16 }} /> : <LinkIcon sx={{ fontSize: 16 }} />}
+                                    <Typography variant="caption" sx={{ color: '#e5e7eb', fontWeight: 700 }}>
+                                        {item}
+                                    </Typography>
+                                </Box>
+                            ))}
+                        </Box>
+                    </Box>
                     <Box sx={{ 
                         display: 'flex', 
                         overflowX: 'auto', 
@@ -325,7 +407,7 @@ const HomePage: React.FC = () => {
                                         background: `url(${bgUrl})`, 
                                         backgroundSize: 'cover', 
                                         backgroundPosition: 'center',
-                                        borderRadius: 6,
+                                        borderRadius: 2,
                                         mb: 3,
                                         boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
                                         position: 'relative',
@@ -378,7 +460,7 @@ const HomePage: React.FC = () => {
                                 Orenix AI
                             </Typography>
                             <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 300, lineHeight: 1.8 }}>
-                                Next-generation AI video creation platform. Transform your ideas into cinematic reality with the power of generative AI.
+                                An AI video workflow for turning ideas, URLs, and product briefs into editable scripts, storyboards, and rendered videos.
                             </Typography>
                         </Grid>
                         <Grid item xs={12} md={4}>
