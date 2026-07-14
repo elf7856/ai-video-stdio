@@ -19,7 +19,7 @@ const TeamPage: React.FC = () => {
             avatar: avatarImage,
             links: {
                 github: "https://github.com",
-                linkedin: "https://linkedin.com",
+                linkedin: "https://www.linkedin.com/in/xikang-song-5a1447228/",
                 email: "mailto:xikangsong@orenixai.com"
             }
         }
